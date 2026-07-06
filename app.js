@@ -175,31 +175,12 @@ function typeBadgeHTML(type) {
 }
 
 function pillsHTML(targets, hit, type) {
-  const isShort  = type === "SHORT";
-  const hitColor = isShort ? "var(--red)"   : "var(--green)";
-  const hitBg    = isShort ? "rgba(255,68,102,.15)" : "rgba(0,255,136,.12)";
-  const hitBorder= isShort ? "rgba(255,68,102,.4)"  : "rgba(0,255,136,.4)";
-
-  return `<div class="targets-grid">
-    ${targets.map((t, i) => {
-      const isHit    = i < hit;
-      const isNext   = i === hit;
-      const isMiss   = i > hit;
-      if (isHit) {
-        return `<div class="tg-hit" style="border-color:${hitBorder};background:${hitBg}">
-          <span class="tg-pct" style="color:${hitColor}">${t}</span>
-          <span class="tg-check" style="color:${hitColor}">✓</span>
-        </div>`;
-      }
-      if (isNext) {
-        return `<div class="tg-next">
-          <span class="tg-pct-next">${t}</span>
-          <span class="tg-arrow">→</span>
-        </div>`;
-      }
-      return `<div class="tg-miss"><span class="tg-pct-miss">${t}</span></div>`;
-    }).join("")}
-  </div>`;
+  return (targets || []).map((t, i) => {
+    let cls = "pill-miss";
+    if (i < hit) cls = type === "SHORT" ? "pill-hit-s" : "pill-hit";
+    else if (i === hit) cls = "pill-active";
+    return `<span class="pill ${cls}">${t}</span>`;
+  }).join("");
 }
 
 function fmtPrice(price) {
@@ -411,7 +392,9 @@ function renderAlerts() {
           </div>
           <div class="profit-pct">${s.profitPct||s.profit_pct}</div>
           <div class="profit-time">${s.timeToHit||s.time_to_hit||"—"} · ${s.date||""}</div>
-          ${pillsHTML(s.targets, s.hit, s.type)}
+          <div class="targets-wrap" style="margin-top:7px">
+            ${pillsHTML(s.targets, s.hit, s.type)}
+          </div>
         </div>`;
     }
 
@@ -440,7 +423,7 @@ function renderAlerts() {
         ${s.setup&&s.setup!=="MANUAL"?`<div><span class="setup-badge">${s.setup}</span></div>`:""}
         ${s.reason?`<div class="sc-reason">${s.reason}</div>`:""}
         <div class="sc-targets-label">ALVOS: <span class="targets-progress">${s.hit}/${s.targets.length}</span></div>
-        ${pillsHTML(s.targets, s.hit, s.type)}
+        <div class="targets-wrap">${pillsHTML(s.targets, s.hit, s.type)}</div>
         <div class="sc-footer">SL: ${s.stoploss} · ${s.hit}/${s.targets.length} alvos</div>
       </div>`;
   }).join("");
