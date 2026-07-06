@@ -577,33 +577,120 @@ async function loadMarketData() {
   }
 
   try {
-    const priceCtx = Object.entries(state.prices)
-      .map(([pair, d]) => `${pair}: $${fmtPrice(d.price)} (${d.change24h >= 0 ? "+" : ""}${d.change24h}%)`)
-      .join(", ");
+    // 1. Fear & Greed — alternative.me (público, sem CORS)
+    let fearGreed = 50, fearGreedText = "Neutro";
+    try {
+      const fgRes  = await fetch("https://api.alternative.me/fng/?limit=1&format=json", { signal: AbortSignal.timeout(6000) });
+      const fgData = await fgRes.json();
+      fearGreed     = parseInt(fgData?.data?.[0]?.value || "50");
+      fearGreedText = fgData?.data?.[0]?.value_classification || "Neutro";
+    } catch(e) { console.warn("F&G:", e.message); }
 
-    const raw = await callClaude(
-      MARKET_SYSTEM,
-      `Preços reais agora: ${priceCtx || "Use preços realistas de Julho 2026"}.
-Hora atual: ${new Date().toLocaleString("pt-BR")}.
-Gere dados de mercado completos e realistas baseados nesses preços.`,
-      2000
-    );
-    const parsed = parseJSON(raw);
-    if (parsed) {
-      // Injeta preços reais nos campos de preço
-      if (state.prices["BTC/USDT"]) parsed.btcPrice = fmtPrice(state.prices["BTC/USDT"].price);
-      if (state.prices["ETH/USDT"]) parsed.ethPrice = fmtPrice(state.prices["ETH/USDT"].price);
-      if (state.prices["BNB/USDT"]) parsed.bnbPrice = fmtPrice(state.prices["BNB/USDT"].price);
-      state.marketData = parsed;
-      renderMarket(parsed);
-      const miniBias=document.getElementById("miniBias");
-      const miniFG=document.getElementById("miniFG");
-      const miniDom=document.getElementById("miniDom");
-      if (miniBias) { miniBias.textContent=parsed.marketBias; miniBias.className="mini-val "+(parsed.marketBias==="BULLISH"?"green":parsed.marketBias==="BEARISH"?"red":"yellow"); }
-      if (miniFG)   { const fg=parsed.fearGreed||55; miniFG.textContent=fg; miniFG.className="mini-val "+(fg>60?"green":fg<40?"red":"yellow"); }
-      if (miniDom)  miniDom.textContent = parsed.btcDominance||"—";
-      show("marketMini");
-    }
+    // 2. Global stats — CoinGecko (dominância, market cap, volume)
+    let totalMarketCap = "—", volume24h = "—", btcDom = "—", ethDom = "—", activeCrypts = "—";
+    try {
+      const gRes  = await fetch("https://api.coingecko.com/api/v3/global", { signal: AbortSignal.timeout(8000) });
+      const gData = await gRes.json();
+      const g     = gData?.data || {};
+      const fmt   = n => { if(!n)return"—"; if(n>=1e12)return"$"+(n/1e12).toFixed(2)+"T"; if(n>=1e9)return"$"+(n/1e9).toFixed(1)+"B"; return"$"+n.toFixed(0); };
+      totalMarketCap = fmt(g.total_market_cap?.usd);
+      volume24h      = fmt(g.total_volume?.usd);
+      btcDom         = (g.market_cap_percentage?.btc||0).toFixed(1)+"%";
+      ethDom         = (g.market_cap_percentage?.eth||0).toFixed(1)+"%";
+      activeCrypts   = (g.active_cryptocurrencies||0).toLocaleString("pt-BR");
+    } catch(e) { console.warn("Global:", e.message); }
+
+    // 3. Histórico BTC 24h — CoinGecko
+    let btcChart = [];
+    try {
+      const bRes  = await fetch("https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=1&interval=hourly", { signal: AbortSignal.timeout(8000) });
+      const bData = await bRes.json();
+      btcChart = (bData?.prices||[]).map(([ts,p]) => ({
+        h: new Date(ts).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"}),
+        p: Math.round(p)
+      }));
+    } catch(e) { console.warn("BTC hist:", e.message); }
+
+    // 4. Dominância histórica 14d
+    let domChart = [];
+    try {
+      const [br, er] = await Promise.all([
+        fetch("https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=14&interval=daily",  { signal: AbortSignal.timeout(8000) }),
+        fetch("https://api.coingecko.com/api/v3/coins/ethereum/market_chart?vs_currency=usd&days=14&interval=daily", { signal: AbortSignal.timeout(8000) }),
+      ]);
+      const bd = await br.json(); const ed = await er.json();
+      domChart = (bd?.market_caps||[]).slice(-10).map(([ts,bv],i) => {
+        const ev = ed?.market_caps?.[i]?.[1]||0, tot = bv+ev;
+        return { h: new Date(ts).toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"}), btc: +((bv/tot*100).toFixed(1)), eth: +((ev/tot*100).toFixed(1)) };
+      });
+    } catch(e) { console.warn("Dom hist:", e.message); }
+
+    // 5. Top movers — CoinGecko
+    let topMovers = [], topLosers = [];
+    try {
+      const mRes  = await fetch("https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=30&page=1&price_change_percentage=24h", { signal: AbortSignal.timeout(8000) });
+      const mData = await mRes.json();
+      if (Array.isArray(mData)) {
+        const sorted = [...mData].sort((a,b) => (b.price_change_percentage_24h||0)-(a.price_change_percentage_24h||0));
+        const fp = p => { if(!p)return"—"; if(p<0.0001)return p.toExponential(3); if(p<1)return p.toFixed(4); if(p<100)return p.toFixed(2); return p.toLocaleString("en-US",{maximumFractionDigits:0}); };
+        topMovers = sorted.slice(0,5).map(c => ({ pair:c.symbol.toUpperCase()+"/USDT", chg:"+"+(c.price_change_percentage_24h||0).toFixed(2)+"%", price:fp(c.current_price) }));
+        topLosers = sorted.slice(-5).reverse().map(c => ({ pair:c.symbol.toUpperCase()+"/USDT", chg:(c.price_change_percentage_24h||0).toFixed(2)+"%", price:fp(c.current_price) }));
+      }
+    } catch(e) { console.warn("Movers:", e.message); }
+
+    // 6. Calcula viés com base em Fear&Greed + preços
+    const btcChg = parseFloat(state.prices["BTC/USDT"]?.change24h || 0);
+    const ethChg = parseFloat(state.prices["ETH/USDT"]?.change24h || 0);
+    const avg    = (btcChg + ethChg) / 2;
+    const marketBias = fearGreed > 60 && avg > 1 ? "BULLISH" : fearGreed < 40 && avg < -1 ? "BEARISH" : "NEUTRO";
+
+    // Monta objeto compatível com renderMarket
+    const d = {
+      fearGreed,
+      fearGreedText,
+      marketBias,
+      totalMarketCap,
+      volume24h,
+      btcDominance: btcDom,
+      ethDominance: ethDom,
+      activeCrypts,
+      btcPrice: fmtPrice(state.prices["BTC/USDT"]?.price),
+      ethPrice: fmtPrice(state.prices["ETH/USDT"]?.price),
+      bnbPrice: fmtPrice(state.prices["BNB/USDT"]?.price),
+      solPrice: fmtPrice(state.prices["SOL/USDT"]?.price),
+      btcChg, ethChg,
+      btcChart,
+      dominanceChart: domChart,
+      topMovers,
+      topLosers,
+      // Campos extras para compatibilidade
+      openInterest:  "—",
+      longShortRatio:"—",
+      fundingRate:   "—",
+      altcoinSeason: fearGreed > 60 ? Math.min(fearGreed + 10, 99) : Math.max(fearGreed - 10, 1),
+      marketNote: `BTC ${btcChg>=0?"+":""}${btcChg.toFixed(2)}% · ETH ${ethChg>=0?"+":""}${ethChg.toFixed(2)}% · Fear&Greed: ${fearGreed} (${fearGreedText})`,
+      sectors: [
+        { name:"Bitcoin",  bias: btcChg>0?"BULLISH":"BEARISH", score: Math.min(Math.round(50 + btcChg*3), 99) },
+        { name:"Ethereum", bias: ethChg>0?"BULLISH":"BEARISH", score: Math.min(Math.round(50 + ethChg*3), 99) },
+        { name:"DeFi",     bias: avg>0?"BULLISH":"NEUTRO",     score: Math.round(50 + avg*2)                  },
+        { name:"Memes",    bias: fearGreed>60?"BULLISH":"NEUTRO", score: Math.round(fearGreed)                },
+        { name:"Layer 2",  bias: "NEUTRO",                     score: Math.round(45 + avg*1.5)                },
+        { name:"AI Tokens",bias: fearGreed>55?"BULLISH":"NEUTRO", score: Math.round(fearGreed * 0.9)          },
+      ],
+    };
+
+    state.marketData = d;
+    renderMarket(d);
+
+    // Atualiza mini-bar
+    const miniBias = document.getElementById("miniBias");
+    const miniFG   = document.getElementById("miniFG");
+    const miniDom  = document.getElementById("miniDom");
+    if (miniBias) { miniBias.textContent = marketBias; miniBias.className = "mini-val "+(marketBias==="BULLISH"?"green":marketBias==="BEARISH"?"red":"yellow"); }
+    if (miniFG)   { miniFG.textContent = fearGreed; miniFG.className = "mini-val "+(fearGreed>60?"green":fearGreed<40?"red":"yellow"); }
+    if (miniDom)  miniDom.textContent = btcDom;
+    show("marketMini");
+
   } catch (err) {
     console.error("Market data error:", err);
     if (content) content.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Erro ao carregar dados</div><button class="primary-btn" onclick="loadMarketData()">TENTAR NOVAMENTE</button></div>`;
@@ -611,6 +698,7 @@ Gere dados de mercado completos e realistas baseados nesses preços.`,
 
   state.marketLoading = false;
 }
+
 
 function renderMarket(d) {
   Object.values(state.charts).forEach(c => { try { c.destroy(); } catch {} });
