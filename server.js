@@ -1,10 +1,10 @@
-/* ══════════════════════════════════════════════════════════════════
-   ACS SYSTEM — server.js v5
-   + Rota de primeiro acesso / troca obrigatória de senha
-   + Admin: criar usuário manual com envio de email
-   + Admin: deletar usuário
-   + Admin: reenviar email de boas-vindas
-   ══════════════════════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════
+   server.js — ALFA CRIPTO SINAIS v2
+   + Preços reais via CoinGecko
+   + Signals persistidos no banco (CRUD admin)
+   + Targets ativam automaticamente com preço real
+   + Auth por email/senha · Webhook Eduzz
+   ══════════════════════════════════════════════ */
 
 require("dotenv").config();
 const express = require("express");
@@ -18,71 +18,151 @@ const PORT = process.env.PORT || 3000;
 const API_KEY   = process.env.ANTHROPIC_API_KEY;
 const ADMIN_KEY = process.env.ADMIN_KEY;
 
-if (!API_KEY) { console.error("❌ ANTHROPIC_API_KEY não encontrada"); process.exit(1); }
+if (!API_KEY) {
+  console.error("\n❌ ANTHROPIC_API_KEY não encontrada no .env\n");
+  process.exit(1);
+}
 
+// ── Admin middleware ───────────────────────────────────────────────────────────
 function requireAdmin(req, res, next) {
-  if (!ADMIN_KEY) return res.status(500).json({ error: "admin_not_configured" });
+  if (!ADMIN_KEY) return res.status(500).json({ error:"admin_not_configured" });
   const key = req.headers["x-admin-key"] || req.query.key;
-  if (key !== ADMIN_KEY) return res.status(401).json({ error: "unauthorized" });
+  if (key !== ADMIN_KEY) return res.status(401).json({ error:"unauthorized" });
   next();
 }
 
-function sanitizeUser(u) {
-  if (!u) return u;
-  const { password_hash, ...safe } = u;
+// ── Demo user em modo local ────────────────────────────────────────────────────
+const DEMO_EMAIL    = "teste@local.com";
+const DEMO_PASSWORD = "teste123";
+if (process.env.NODE_ENV !== "production" && db.users.all().length === 0) {
+  const hash = auth.hashPassword(DEMO_PASSWORD);
+  db.users.create({ email: DEMO_EMAIL, password_hash: hash, name: "Conta de Teste", plan: "Demo Local" });
+  console.log(`\n👤 Conta de teste criada automaticamente:`);
+  console.log(`   Email: ${DEMO_EMAIL}`);
+  console.log(`   Senha: ${DEMO_PASSWORD}\n`);
+}
+
+function sanitizeUser(user) {
+  if (!user) return user;
+  const { password_hash, ...safe } = user;
   return safe;
 }
 
-// Demo user em modo local
-if (process.env.NODE_ENV !== "production" && db.users.all().length === 0) {
-  db.users.create({ email: "teste@local.com", password_hash: auth.hashPassword("teste123"), name: "Teste Local", plan: "Demo" });
-  console.log("\n👤 Demo: teste@local.com / teste123\n");
-}
-
-app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf.toString("utf8"); } }));
+// ── Body parsing ───────────────────────────────────────────────────────────────
+app.use(express.json({
+  verify: (req, res, buf) => { req.rawBody = buf.toString("utf8"); },
+}));
 
 // ══════════════════════════════════════════════
-// PREÇOS — CoinGecko
+// PREÇOS EM TEMPO REAL — CoinGecko (grátis, sem API key)
+// Cache de 30s para não bater limite de rate
 // ══════════════════════════════════════════════
 let priceCache = { data: null, fetchedAt: 0 };
-const CG_IDS   = "bitcoin,ethereum,binancecoin,solana,ripple,cardano,avalanche-2,chainlink,dogecoin,arbitrum,optimism,injective-protocol,toncoin,sui,pepe,worldcoin-wld,near,fantom,aptos";
-const PAIR_MAP  = { bitcoin:"BTC/USDT",ethereum:"ETH/USDT",binancecoin:"BNB/USDT",solana:"SOL/USDT",ripple:"XRP/USDT",cardano:"ADA/USDT","avalanche-2":"AVAX/USDT",chainlink:"LINK/USDT",dogecoin:"DOGE/USDT",arbitrum:"ARB/USDT",optimism:"OP/USDT","injective-protocol":"INJ/USDT",toncoin:"TON/USDT",sui:"SUI/USDT",pepe:"PEPE/USDT","worldcoin-wld":"WLD/USDT",near:"NEAR/USDT",fantom:"FTM/USDT",aptos:"APT/USDT" };
+
+const COINGECKO_IDS = [
+  "bitcoin", "ethereum", "binancecoin", "solana",
+  "ripple", "cardano", "avalanche-2", "chainlink",
+  "dogecoin", "arbitrum", "optimism", "injective-protocol",
+  "toncoin", "sui", "pepe", "worldcoin-wld", "near",
+  "fantom", "aptos"
+].join(",");
 
 async function fetchPrices() {
-  if (priceCache.data && Date.now()-priceCache.fetchedAt < 30_000) return priceCache.data;
+  const now = Date.now();
+  // Cache de 30 segundos
+  if (priceCache.data && now - priceCache.fetchedAt < 30_000) {
+    return priceCache.data;
+  }
+
   try {
-    const r = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${CG_IDS}&vs_currencies=usd&include_24hr_change=true`, { headers:{"Accept":"application/json"}, signal:AbortSignal.timeout(8000) });
-    if (!r.ok) throw new Error(`CG ${r.status}`);
-    const raw = await r.json();
+    const url = `https://api.coingecko.com/api/v3/simple/price?ids=${COINGECKO_IDS}&vs_currencies=usd&include_24hr_change=true`;
+    const resp = await fetch(url, {
+      headers: { "Accept": "application/json", "User-Agent": "alfa-cripto-sinais/2.0" },
+      signal: AbortSignal.timeout(8000),
+    });
+
+    if (!resp.ok) throw new Error(`CoinGecko HTTP ${resp.status}`);
+    const raw = await resp.json();
+
+    // Normaliza para { "BTC/USDT": { price, change24h }, ... }
+    const MAP = {
+      "bitcoin":              "BTC/USDT",
+      "ethereum":             "ETH/USDT",
+      "binancecoin":          "BNB/USDT",
+      "solana":               "SOL/USDT",
+      "ripple":               "XRP/USDT",
+      "cardano":              "ADA/USDT",
+      "avalanche-2":          "AVAX/USDT",
+      "chainlink":            "LINK/USDT",
+      "dogecoin":             "DOGE/USDT",
+      "arbitrum":             "ARB/USDT",
+      "optimism":             "OP/USDT",
+      "injective-protocol":   "INJ/USDT",
+      "toncoin":              "TON/USDT",
+      "sui":                  "SUI/USDT",
+      "pepe":                 "PEPE/USDT",
+      "worldcoin-wld":        "WLD/USDT",
+      "near":                 "NEAR/USDT",
+      "fantom":               "FTM/USDT",
+      "aptos":                "APT/USDT",
+    };
+
     const prices = {};
-    for (const [id, pair] of Object.entries(PAIR_MAP)) {
-      if (raw[id]) prices[pair] = { price: raw[id].usd, change24h: raw[id].usd_24h_change?.toFixed(2)??"0" };
+    for (const [id, pair] of Object.entries(MAP)) {
+      if (raw[id]) {
+        prices[pair] = {
+          price:     raw[id].usd,
+          change24h: raw[id].usd_24h_change?.toFixed(2) ?? "0",
+        };
+      }
     }
+
     priceCache = { data: prices, fetchedAt: Date.now() };
     return prices;
-  } catch(e) { console.error("CoinGecko:", e.message); return priceCache.data||null; }
+  } catch (err) {
+    console.error("⚠️  CoinGecko erro:", err.message);
+    // Retorna cache antigo se existir, ou null
+    return priceCache.data || null;
+  }
 }
 
+// ── Verifica targets automaticamente a cada 30s ────────────────────────────────
 async function checkSignalTargets() {
   const active = db.signals.active();
-  if (!active.length) return;
+  if (active.length === 0) return;
+
   const prices = await fetchPrices();
   if (!prices) return;
-  for (const sig of active) { const p = prices[sig.pair]; if (p) db.signals.checkTargets(sig.id, p.price); }
+
+  for (const sig of active) {
+    const priceObj = prices[sig.pair];
+    if (!priceObj) continue;
+    db.signals.checkTargets(sig.id, priceObj.price);
+  }
 }
+
 setInterval(checkSignalTargets, 30_000);
 
 // ══════════════════════════════════════════════
-// ROTAS PÚBLICAS
+// API PÚBLICA: Preços em tempo real
 // ══════════════════════════════════════════════
-app.get("/api/prices",  auth.requireAuth, async (req, res) => {
+app.get("/api/prices", auth.requireAuth, async (req, res) => {
   const prices = await fetchPrices();
-  if (!prices) return res.status(503).json({ error:"prices_unavailable" });
+  if (!prices) return res.status(503).json({ error: "prices_unavailable", message: "CoinGecko indisponível. Tente em instantes." });
   res.json({ prices, fetchedAt: new Date(priceCache.fetchedAt).toISOString() });
 });
 
-app.get("/api/signals", auth.requireAuth, (req, res) => res.json({ signals: db.signals.all() }));
+// ══════════════════════════════════════════════
+// API: Sinais (leitura — para usuários logados)
+// ══════════════════════════════════════════════
+app.get("/api/signals", auth.requireAuth, (req, res) => {
+  const all = db.signals.all();
+  res.json({ signals: all });
+});
 
+// ══════════════════════════════════════════════
+// WEBHOOK Eduzz
+// ══════════════════════════════════════════════
 app.post("/webhook/eduzz", eduzz.webhookHandler);
 
 // ══════════════════════════════════════════════
@@ -90,22 +170,24 @@ app.post("/webhook/eduzz", eduzz.webhookHandler);
 // ══════════════════════════════════════════════
 app.post("/api/auth/login", (req, res) => {
   const { email, password } = req.body || {};
-  if (!email || !password) return res.status(400).json({ error:"missing_fields" });
+  if (!email || !password)
+    return res.status(400).json({ error:"missing_fields", message:"Informe email e senha." });
+
   const user = db.users.findByEmail(email.toLowerCase().trim());
   if (!user || !auth.verifyPassword(password, user.password_hash))
     return res.status(401).json({ error:"invalid_credentials", message:"Email ou senha incorretos." });
-  if (user.status === "inactive")
-    return res.status(403).json({ error:"subscription_inactive", message:"Assinatura não está ativa. Entre em contato com o suporte." });
-  if (user.status === "pending")
-    return res.status(403).json({ error:"subscription_pending", message:"Seu pagamento está sendo processado. Aguarde alguns minutos." });
+
+  if (user.status !== "active")
+    return res.status(403).json({ error:"subscription_inactive", message:"Assinatura não está ativa." });
+
   if (user.expires_at && new Date(user.expires_at) < new Date()) {
     db.users.update(user.id, { status:"inactive" });
     return res.status(403).json({ error:"subscription_expired", message:"Sua assinatura expirou." });
   }
+
   const session = auth.createSession(user.id);
   auth.setSessionCookie(res, session.id);
-  // Informa se precisa trocar senha
-  res.json({ ok:true, user:{ email:user.email, name:user.name, plan:user.plan }, mustChangePassword: !!user.must_change_password });
+  res.json({ ok:true, user:{ email:user.email, name:user.name, plan:user.plan } });
 });
 
 app.post("/api/auth/logout", (req, res) => {
@@ -118,21 +200,16 @@ app.post("/api/auth/logout", (req, res) => {
 app.get("/api/auth/me", (req, res) => {
   const cookies = auth.parseCookies(req);
   const user = auth.getSession(cookies[auth.COOKIE_NAME]);
-  if (!user || user.status !== "active") return res.status(401).json({ error:"not_authenticated" });
-  res.json({ email:user.email, name:user.name, plan:user.plan, expires_at:user.expires_at, mustChangePassword: !!user.must_change_password });
+  if (!user || user.status !== "active")
+    return res.status(401).json({ error:"not_authenticated" });
+  res.json({ email:user.email, name:user.name, plan:user.plan, expires_at:user.expires_at });
 });
 
-// Trocar senha (autenticado — primeiro acesso ou voluntário)
 app.post("/api/auth/change-password", auth.requireAuth, (req, res) => {
-  const { currentPassword, newPassword } = req.body || {};
-  if (!newPassword || newPassword.length < 8)
-    return res.status(400).json({ error:"weak_password", message:"A senha deve ter pelo menos 8 caracteres." });
-  // Se não é primeiro acesso, verifica senha atual
-  if (!req.user.must_change_password && currentPassword) {
-    if (!auth.verifyPassword(currentPassword, req.user.password_hash))
-      return res.status(401).json({ error:"wrong_password", message:"Senha atual incorreta." });
-  }
-  db.users.update(req.user.id, { password_hash: auth.hashPassword(newPassword), must_change_password: false });
+  const { newPassword } = req.body || {};
+  if (!newPassword || newPassword.length < 6)
+    return res.status(400).json({ error:"weak_password", message:"Senha precisa de ao menos 6 caracteres." });
+  db.users.update(req.user.id, { password_hash: auth.hashPassword(newPassword) });
   res.json({ ok:true });
 });
 
@@ -140,152 +217,169 @@ app.post("/api/auth/change-password", auth.requireAuth, (req, res) => {
 // ADMIN — Usuários
 // ══════════════════════════════════════════════
 app.get("/api/admin/users", requireAdmin, (req, res) => {
-  const { status, search } = req.query;
-  let list = db.users.all();
-  if (status && status !== "all") list = list.filter(u => u.status === status);
-  if (search) {
-    const q = search.toLowerCase();
-    list = list.filter(u => u.email.toLowerCase().includes(q) || (u.name||"").toLowerCase().includes(q));
-  }
-  res.json({ users: list.map(sanitizeUser), stats: db.users.stats() });
+  res.json({ users: db.users.all().map(sanitizeUser) });
 });
 
-// Criar usuário manualmente (admin) + enviar email
-app.post("/api/admin/users", requireAdmin, async (req, res) => {
-  const { email, password, name, plan, sendEmail, status } = req.body || {};
-  if (!email) return res.status(400).json({ error:"missing_fields", message:"Email é obrigatório." });
+app.post("/api/admin/users", requireAdmin, (req, res) => {
+  const { email, password, name, plan } = req.body || {};
+  if (!email || !password)
+    return res.status(400).json({ error:"missing_fields", message:"Email e senha são obrigatórios." });
   const norm = email.toLowerCase().trim();
-  if (db.users.findByEmail(norm)) return res.status(409).json({ error:"already_exists", message:"Email já cadastrado." });
-
-  let tempPassword = password;
-  let mustChange   = false;
-
-  if (!tempPassword) {
-    // Gera senha temporária automática
-    tempPassword = eduzz.generateTempPassword();
-    mustChange   = true;
-  }
-
-  const user = db.users.create({
-    email:                norm,
-    password_hash:        auth.hashPassword(tempPassword),
-    name, plan,
-    status:               status || "active",
-    must_change_password: mustChange,
-  });
-
-  // Envia email de boas-vindas se solicitado
-  if (sendEmail !== false) {
-    await eduzz.sendWelcomeEmail({ email: norm, name, tempPassword });
-  }
-
-  res.json({ ok:true, user:sanitizeUser(user), tempPassword: mustChange ? tempPassword : undefined });
+  if (db.users.findByEmail(norm))
+    return res.status(409).json({ error:"already_exists", message:"Já existe assinante com este email." });
+  const hash = auth.hashPassword(password);
+  const user = db.users.create({ email:norm, password_hash:hash, name, plan });
+  res.json({ ok:true, user:sanitizeUser(user) });
 });
 
 app.patch("/api/admin/users/:id", requireAdmin, (req, res) => {
   const id = Number(req.params.id);
   const { status, plan, name, expires_at, newPassword } = req.body || {};
   const patch = {};
-  if (status     !== undefined) patch.status     = status;
-  if (plan       !== undefined) patch.plan       = plan;
-  if (name       !== undefined) patch.name       = name;
-  if (expires_at !== undefined) patch.expires_at = expires_at;
-  if (newPassword) patch.password_hash = auth.hashPassword(newPassword);
+  if (status      !== undefined) patch.status      = status;
+  if (plan        !== undefined) patch.plan        = plan;
+  if (name        !== undefined) patch.name        = name;
+  if (expires_at  !== undefined) patch.expires_at  = expires_at;
+  if (newPassword)               patch.password_hash = auth.hashPassword(newPassword);
   const user = db.users.update(id, patch);
   if (!user) return res.status(404).json({ error:"not_found" });
   res.json({ ok:true, user:sanitizeUser(user) });
 });
 
-// Deletar usuário
-app.delete("/api/admin/users/:id", requireAdmin, (req, res) => {
-  const id = Number(req.params.id);
-  const ok = db.users.delete(id);
-  if (!ok) return res.status(404).json({ error:"not_found" });
-  res.json({ ok:true });
+app.get("/api/admin/webhook-log", requireAdmin, (req, res) => {
+  res.json({ logs: db.webhookLog.recent(50) });
 });
-
-// Reenviar email de boas-vindas
-app.post("/api/admin/users/:id/resend-email", requireAdmin, async (req, res) => {
-  const id   = Number(req.params.id);
-  const user = db.users.findById(id);
-  if (!user) return res.status(404).json({ error:"not_found" });
-  const tempPassword = eduzz.generateTempPassword();
-  db.users.update(id, { password_hash: auth.hashPassword(tempPassword), must_change_password: true });
-  await eduzz.sendWelcomeEmail({ email:user.email, name:user.name, tempPassword });
-  res.json({ ok:true, message:`Email reenviado para ${user.email}` });
-});
-
-app.get("/api/admin/webhook-log", requireAdmin, (req, res) => res.json({ logs: db.webhookLog.recent(50) }));
 
 // ══════════════════════════════════════════════
-// ADMIN — Sinais
+// ADMIN — Sinais (CRUD completo)
 // ══════════════════════════════════════════════
-app.get("/api/admin/signals", requireAdmin, (req, res) => res.json({ signals: db.signals.all() }));
 
-app.post("/api/admin/signals/check-targets", requireAdmin, async (req, res) => {
-  await checkSignalTargets();
-  res.json({ ok:true, checked: db.signals.active().length });
+// Listar todos
+app.get("/api/admin/signals", requireAdmin, (req, res) => {
+  res.json({ signals: db.signals.all() });
 });
 
+// Criar sinal
 app.post("/api/admin/signals", requireAdmin, (req, res) => {
   const { pair, type, entry, leverage, stoploss, targets, reason, timeframe, setup, confidence, source } = req.body || {};
-  if (!pair || !entry) return res.status(400).json({ error:"missing_fields", message:"Par e entrada são obrigatórios." });
-  const sig = db.signals.create({ pair, type, entry, leverage, stoploss, targets, reason, timeframe, setup, confidence, source:"admin" });
+  if (!pair || !entry)
+    return res.status(400).json({ error:"missing_fields", message:"Par e entrada são obrigatórios." });
+
+  const sig = db.signals.create({ pair, type, entry, leverage, stoploss, targets, reason, timeframe, setup, confidence, source: source || "admin" });
   res.json({ ok:true, signal:sig });
 });
 
+// Editar sinal
 app.patch("/api/admin/signals/:id", requireAdmin, (req, res) => {
   const id = Number(req.params.id);
   const allowed = ["pair","type","entry","leverage","stoploss","targets","reason","timeframe","setup","confidence","status","hit","profit_pct","time_to_hit"];
   const patch = {};
-  for (const k of allowed) { if (req.body[k] !== undefined) patch[k] = req.body[k]; }
+  for (const k of allowed) {
+    if (req.body[k] !== undefined) patch[k] = req.body[k];
+  }
   const sig = db.signals.update(id, patch);
   if (!sig) return res.status(404).json({ error:"not_found" });
   res.json({ ok:true, signal:sig });
 });
 
+// Deletar sinal
 app.delete("/api/admin/signals/:id", requireAdmin, (req, res) => {
-  const ok = db.signals.delete(Number(req.params.id));
+  const id = Number(req.params.id);
+  const ok = db.signals.delete(id);
   if (!ok) return res.status(404).json({ error:"not_found" });
   res.json({ ok:true });
 });
 
+// Forçar checagem de targets agora
+app.post("/api/admin/signals/check-targets", requireAdmin, async (req, res) => {
+  await checkSignalTargets();
+  res.json({ ok:true, checked: db.signals.active().length });
+});
+
+
 // ══════════════════════════════════════════════
-// PROXY CLAUDE
+// RELATÓRIOS (admin)
 // ══════════════════════════════════════════════
-app.post("/api/claude", async (req, res) => {
-  const cookies  = auth.parseCookies(req);
-  const userSess = auth.getSession(cookies[auth.COOKIE_NAME]);
-  const isAdmin  = ADMIN_KEY && req.headers["x-admin-key"] === ADMIN_KEY;
-  const isUser   = userSess && userSess.status === "active";
-  if (!isAdmin && !isUser) return res.status(401).json({ error:"unauthorized" });
+
+// Meses disponíveis
+app.get("/api/admin/reports/months", requireAdmin, (req, res) => {
+  const months = db.reports ? db.reports.availableMonths() : [];
+  res.json({ months });
+});
+
+// Relatório por mês: /api/admin/reports/2026-07
+app.get("/api/admin/reports/:period", requireAdmin, (req, res) => {
+  const period = req.params.period; // "2026-07" ou "2026-07-01/2026-07-31"
+
+  let sigs;
+  if (period.includes("/")) {
+    const [from, to] = period.split("/");
+    sigs = db.reports ? db.reports.byRange(from, to) : [];
+  } else {
+    const [year, month] = period.split("-").map(Number);
+    sigs = db.reports ? db.reports.byMonth(year, month) : [];
+  }
+
+  const metrics = db.reports ? db.reports.metrics(sigs) : {};
+  const sorted  = [...sigs].sort((a,b) => new Date(b.created_at)-new Date(a.created_at));
+
+  res.json({ period, metrics, signals: sorted });
+});
+
+// Relatório geral (todos os tempos)
+app.get("/api/admin/reports", requireAdmin, (req, res) => {
+  const all     = db.signals.all();
+  const metrics = db.reports ? db.reports.metrics(all) : {};
+  const months  = db.reports ? db.reports.availableMonths() : [];
+  res.json({ metrics, months, total: all.length });
+});
+
+// ══════════════════════════════════════════════
+// PROXY CLAUDE (protegido por sessão)
+// ══════════════════════════════════════════════
+app.post("/api/claude", auth.requireAuth, async (req, res) => {
   try {
     const { system, messages, max_tokens } = req.body;
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method:"POST",
-      headers:{ "Content-Type":"application/json", "x-api-key":API_KEY, "anthropic-version":"2023-06-01" },
-      body: JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:max_tokens||2000, system, messages }),
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": API_KEY,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({ model:"claude-sonnet-4-5", max_tokens:max_tokens||2000, system, messages }),
     });
-    const data = await r.json();
-    if (!r.ok) return res.status(r.status).json(data);
+    const data = await response.json();
+    if (!response.ok) { console.error("Anthropic erro:", data); return res.status(response.status).json(data); }
     res.json(data);
-  } catch(e) { res.status(500).json({ error:"internal_error", details:e.message }); }
+  } catch (err) {
+    console.error("Proxy Claude erro:", err);
+    res.status(500).json({ error:"internal_error", details:err.message });
+  }
 });
 
 // ══════════════════════════════════════════════
 // PÁGINAS
 // ══════════════════════════════════════════════
-const ROOT = path.join(__dirname);
-app.get("/admin.html", (req, res) => res.sendFile(path.join(ROOT, "admin.html")));
-app.get(["/","/index.html"], auth.requirePageAuth, (req, res) => res.sendFile(path.join(ROOT, "index.html")));
-app.get("/app.js",           auth.requirePageAuth, (req, res) => res.sendFile(path.join(ROOT, "app.js")));
-app.get("/style.css",        auth.requirePageAuth, (req, res) => res.sendFile(path.join(ROOT, "style.css")));
-app.use(express.static(ROOT));
-
-app.listen(PORT, () => {
-  console.log(`\n🚀 ACS SYSTEM v5 rodando na porta ${PORT}`);
-  console.log(`   Admin: /admin.html`);
-  console.log(`   Login: /login.html\n`);
+app.get("/admin.html", (req, res) => {
+  res.sendFile(path.join(__dirname, "admin-pages", "admin.html"));
 });
 
-setInterval(() => db.sessions.cleanExpired(), 60*60*1000).unref();
+const PUBLIC_DIR = path.join(__dirname, "public");
+
+app.get("/",           auth.requirePageAuth, (req, res) => res.sendFile(path.join(PUBLIC_DIR, "index.html")));
+app.get("/index.html", auth.requirePageAuth, (req, res) => res.sendFile(path.join(PUBLIC_DIR, "index.html")));
+app.get("/app.js",     auth.requirePageAuth, (req, res) => res.sendFile(path.join(PUBLIC_DIR, "app.js")));
+app.get("/style.css",  auth.requirePageAuth, (req, res) => res.sendFile(path.join(PUBLIC_DIR, "style.css")));
+
+app.use(express.static(PUBLIC_DIR));
+
+// ══════════════════════════════════════════════
+app.listen(PORT, () => {
+  console.log(`\n🚀 ALFA CRIPTO SINAIS v2 rodando na porta ${PORT}`);
+  console.log(`   Preços reais:    /api/prices  (CoinGecko 30s cache)`);
+  console.log(`   Sinais admin:    /admin.html`);
+  console.log(`   Login:           /login.html\n`);
+});
+
+setInterval(() => db.sessions.cleanExpired(), 60 * 60 * 1000).unref();
