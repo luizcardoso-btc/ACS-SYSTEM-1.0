@@ -362,17 +362,17 @@ app.post("/api/claude", auth.requireAuth, async (req, res) => {
 // PÁGINAS
 // ══════════════════════════════════════════════
 app.get("/admin.html", (req, res) => {
-  res.sendFile(path.join(__dirname, "admin-pages", "admin.html"));
+  res.sendFile(path.join(__dirname, "admin.html"));
 });
 
-const PUBLIC_DIR = path.join(__dirname, "public");
+const ROOT = path.join(__dirname);
 
-app.get("/",           auth.requirePageAuth, (req, res) => res.sendFile(path.join(PUBLIC_DIR, "index.html")));
-app.get("/index.html", auth.requirePageAuth, (req, res) => res.sendFile(path.join(PUBLIC_DIR, "index.html")));
-app.get("/app.js",     auth.requirePageAuth, (req, res) => res.sendFile(path.join(PUBLIC_DIR, "app.js")));
-app.get("/style.css",  auth.requirePageAuth, (req, res) => res.sendFile(path.join(PUBLIC_DIR, "style.css")));
+app.get("/",           auth.requirePageAuth, (req, res) => res.sendFile(path.join(ROOT, "index.html")));
+app.get("/index.html", auth.requirePageAuth, (req, res) => res.sendFile(path.join(ROOT, "index.html")));
+app.get("/app.js",     auth.requirePageAuth, (req, res) => res.sendFile(path.join(ROOT, "app.js")));
+app.get("/style.css",  auth.requirePageAuth, (req, res) => res.sendFile(path.join(ROOT, "style.css")));
 
-app.use(express.static(PUBLIC_DIR));
+app.use(express.static(ROOT));
 
 // ══════════════════════════════════════════════
 app.listen(PORT, () => {
