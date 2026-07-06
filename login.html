@@ -8,75 +8,36 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
 <style>
 :root {
-  --bg:#060810; --bg2:#090C18; --bg3:#0d1526;
-  --blue:#3B82F6; --blue2:#60A5FA;
-  --border:rgba(255,255,255,.08); --border2:rgba(59,130,246,.25);
-  --text:#CBD5E1; --text2:#64748B; --text3:#334155;
-  --f:'Inter',sans-serif; --mono:'Share Tech Mono',monospace;
+  --bg:#060810;--bg2:#090C18;--bg3:#0d1526;
+  --blue:#3B82F6;--blue2:#60A5FA;
+  --border:rgba(255,255,255,.08);--border2:rgba(59,130,246,.25);
+  --text:#CBD5E1;--text2:#64748B;--text3:#334155;
+  --f:'Inter',sans-serif;--mono:'Share Tech Mono',monospace;
 }
 *{box-sizing:border-box;margin:0;padding:0;}
 body{background:var(--bg);color:var(--text);font-family:var(--f);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;-webkit-font-smoothing:antialiased;}
-
-/* blobs */
 .blob{position:fixed;border-radius:50%;filter:blur(80px);pointer-events:none;}
 .b1{width:400px;height:400px;background:rgba(59,130,246,.08);top:-100px;right:-100px;}
 .b2{width:300px;height:300px;background:rgba(99,102,241,.06);bottom:-80px;left:-80px;}
-
-.card{
-  width:100%;max-width:420px;
-  background:var(--bg2);
-  border:1px solid var(--border);
-  border-radius:20px;padding:40px 36px;
-  position:relative;z-index:2;
-  box-shadow:0 24px 64px rgba(0,0,0,.4);
-}
-
-/* brand */
+.card{width:100%;max-width:400px;background:var(--bg2);border:1px solid var(--border);border-radius:20px;padding:40px 36px;position:relative;z-index:2;box-shadow:0 24px 64px rgba(0,0,0,.4);}
 .brand{display:flex;align-items:center;gap:12px;margin-bottom:32px;justify-content:center;}
-.brand-logo{filter:drop-shadow(0 0 10px rgba(96,165,250,.4));}
 .brand-name{font-size:17px;font-weight:700;color:#fff;letter-spacing:-.2px;display:block;}
 .brand-tag{font-family:var(--mono);font-size:9px;color:var(--blue2);letter-spacing:2px;display:block;margin-top:2px;}
-
 h1{font-size:22px;font-weight:700;color:#fff;text-align:center;margin-bottom:6px;letter-spacing:-.5px;}
 .subtitle{font-size:14px;color:var(--text2);text-align:center;margin-bottom:28px;line-height:1.6;}
-
-/* alerts */
 .alert{padding:12px 14px;border-radius:10px;font-size:13px;margin-bottom:18px;display:none;line-height:1.5;}
-.alert-error  {background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);color:#FCA5A5;}
-.alert-info   {background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.2);color:var(--blue2);}
-.alert-success{background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);color:#86EFAC;}
-
-/* fields */
+.alert-error{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);color:#FCA5A5;}
 .field{margin-bottom:16px;}
 .field label{display:block;font-size:11px;color:var(--text2);letter-spacing:.5px;font-family:var(--mono);margin-bottom:6px;text-transform:uppercase;}
-.field input{
-  width:100%;background:var(--bg3);
-  border:1px solid var(--border);border-radius:10px;
-  padding:12px 14px;color:#fff;font-size:15px;font-family:var(--f);
-  transition:border-color .2s;outline:none;
-}
+.field input{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:12px 14px;color:#fff;font-size:15px;font-family:var(--f);transition:border-color .2s;outline:none;}
 .field input:focus{border-color:rgba(59,130,246,.5);}
 .field input::placeholder{color:var(--text3);}
-
-.pass-strength{font-size:11px;margin-top:5px;font-family:var(--mono);height:14px;}
-
-/* submit */
-.submit-btn{
-  width:100%;background:var(--blue);color:#fff;border:none;border-radius:10px;
-  padding:14px;font-size:15px;font-weight:600;font-family:var(--f);
-  cursor:pointer;transition:.2s;margin-top:4px;letter-spacing:-.2px;
-  box-shadow:0 4px 20px rgba(59,130,246,.3);
-}
+.submit-btn{width:100%;background:var(--blue);color:#fff;border:none;border-radius:10px;padding:14px;font-size:15px;font-weight:600;font-family:var(--f);cursor:pointer;transition:.2s;margin-top:4px;box-shadow:0 4px 20px rgba(59,130,246,.3);}
 .submit-btn:hover:not(:disabled){background:var(--blue2);transform:translateY(-1px);}
 .submit-btn:disabled{opacity:.5;cursor:not-allowed;}
-
-/* help */
 .help{margin-top:24px;padding-top:20px;border-top:1px solid var(--border);}
 .help p{font-size:13px;color:var(--text2);margin-bottom:6px;line-height:1.6;}
 .help a{color:var(--blue2);}
-
-/* novos campos (ocultos até 1° acesso) */
-#newPassWrap{display:none;}
 </style>
 </head>
 <body>
@@ -84,9 +45,8 @@ h1{font-size:22px;font-weight:700;color:#fff;text-align:center;margin-bottom:6px
 <div class="blob b2"></div>
 
 <div class="card">
-  <!-- Brand -->
   <div class="brand">
-    <svg class="brand-logo" width="40" height="40" viewBox="0 0 400 400" fill="none">
+    <svg width="40" height="40" viewBox="0 0 400 400" fill="none" style="filter:drop-shadow(0 0 10px rgba(96,165,250,.4))">
       <defs><linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#60A5FA"/><stop offset="100%" stop-color="#818CF8"/></linearGradient></defs>
       <circle cx="200" cy="200" r="155" stroke="url(#g)" stroke-width="18" fill="none"/>
       <rect x="155" y="28" width="22" height="46" rx="11" fill="url(#g)"/>
@@ -101,42 +61,25 @@ h1{font-size:22px;font-weight:700;color:#fff;text-align:center;margin-bottom:6px
     </div>
   </div>
 
-  <h1 id="formTitle">Acesse sua conta</h1>
-  <p class="subtitle" id="formSubtitle">Entre com o email e senha que você recebeu após a compra.</p>
+  <h1>Acesse sua conta</h1>
+  <p class="subtitle">Entre com o email e senha enviados após a compra.</p>
 
-  <div class="alert" id="alertBox"></div>
+  <div class="alert alert-error" id="alertBox"></div>
 
   <form id="loginForm" autocomplete="on">
-    <!-- Campo email -->
-    <div class="field" id="emailField">
+    <div class="field">
       <label>Email</label>
       <input type="email" id="email" placeholder="seu@email.com" autocomplete="email" required/>
     </div>
-
-    <!-- Campo senha atual -->
-    <div class="field" id="passField">
+    <div class="field">
       <label>Senha</label>
-      <input type="password" id="password" placeholder="••••••••" autocomplete="current-password"/>
+      <input type="password" id="password" placeholder="••••••••" autocomplete="current-password" required/>
     </div>
-
-    <!-- Campos de novo acesso (ocultos até primeiro login) -->
-    <div id="newPassWrap">
-      <div class="field">
-        <label>Nova senha</label>
-        <input type="password" id="newPassword" placeholder="Mínimo 8 caracteres" autocomplete="new-password"/>
-        <div class="pass-strength" id="passStrength"></div>
-      </div>
-      <div class="field">
-        <label>Confirmar nova senha</label>
-        <input type="password" id="confirmPassword" placeholder="Repita a senha" autocomplete="new-password"/>
-      </div>
-    </div>
-
     <button type="submit" class="submit-btn" id="submitBtn">ENTRAR</button>
   </form>
 
   <div class="help">
-    <p>🔑 Acabou de comprar? Sua senha temporária foi enviada por email.</p>
+    <p>🔑 Sua senha foi enviada por email após a compra.</p>
     <p>❓ Não recebeu? <a href="mailto:suporte@acssystem.com.br">Fale com o suporte</a></p>
   </div>
 </div>
