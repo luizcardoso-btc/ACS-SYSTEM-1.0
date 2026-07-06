@@ -439,27 +439,77 @@ function renderSinais() {
   const feed = document.getElementById("sinaisFeed");
   if (!feed) return;
 
-  const f   = state.signalFilter;
-  const all = [
-    ...state.signals.filter(s => f==="TODOS"?true:s.type===f),
-    ...state.profits.filter(s => f==="TODOS"?true:s.type===f),
-  ].sort((a,b)=>(b.id||0)-(a.id||0)).slice(0,50);
+  const f = state.signalFilter;
 
-  feed.innerHTML = all.map(s => `
-    <div class="signal-row${s.status==="profit"?" profit":""}">
-      <div class="signal-row-left">
-        <div class="row-pair">${s.pair}${s.source==="admin"?'<span class="m-tag">M</span>':""}</div>
-        <div class="row-meta">${s.date||""} ${s.time||""}</div>
-        ${s.confidence?`<div class="stars" style="font-size:10px">${starsHTML(s.confidence)}</div>`:""}
-      </div>
-      <div class="signal-row-right">
-        ${typeBadgeHTML(s.type)}
-        ${s.status==="profit"
-          ? `<div class="row-profit">${s.profitPct||s.profit_pct}</div>`
-          : `<div class="row-prog">${s.hit}/${s.targets.length} alvos</div>`
-        }
-      </div>
-    </div>`).join("") || `<div class="empty-state"><div class="empty-title">Nenhum sinal disponível</div></div>`;
+  // Histórico completo: ativos + lucros + fechados
+  let all = [ ...state.signals, ...state.profits, ...(state.closed||[]) ];
+
+  // Aplica filtro
+  if (f === "profit") {
+    all = all.filter(s => s.status === "profit");
+  } else if (f === "LONG" || f === "SHORT") {
+    all = all.filter(s => s.type === f);
+  }
+  all = all.sort((a,b) => (b.id||0)-(a.id||0));
+
+  // Métricas do mês atual
+  const now = new Date();
+  const thisMonth = all.filter(s => {
+    const d = new Date(s.created_at || Date.now());
+    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+  });
+  const mWins   = thisMonth.filter(s => s.status === "profit").length;
+  const mLosses = thisMonth.filter(s => s.status === "loss").length;
+  const mTotal  = mWins + mLosses;
+  const mWR     = mTotal > 0 ? Math.round(mWins/mTotal*100) : null;
+  const mPcts   = thisMonth.filter(s=>s.status==="profit")
+    .map(s => parseFloat((s.profit_pct||s.profitPct||"0").replace(/[^0-9.-]/g,""))||0)
+    .filter(v=>v>0);
+  const mAvg = mPcts.length > 0 ? Math.round(mPcts.reduce((a,b)=>a+b,0)/mPcts.length) : null;
+
+  // Exibe métricas mensais
+  const metricsEl = document.getElementById("histMetrics");
+  if (metricsEl) {
+    const mName = now.toLocaleDateString("pt-BR",{month:"long"}).toUpperCase();
+    metricsEl.innerHTML = [
+      { val: mTotal||0,                              lbl: mName,           col:"#fff"    },
+      { val: mWR !== null ? mWR+"%" : "—",           lbl: "ASSERTIVIDADE", col: mWR>=70?"#00ff88":mWR>=50?"#ffcc00":"#ff4466" },
+      { val: mAvg !== null ? "+"+mAvg+"%" : "—",     lbl: "LUCRO MÉDIO",   col:"#00c8ff" },
+    ].map(m => `
+      <div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);border-radius:10px;padding:10px;text-align:center">
+        <div style="font-family:var(--font-mono);font-size:18px;font-weight:700;color:${m.col};line-height:1">${m.val}</div>
+        <div style="font-size:9px;color:var(--text4);margin-top:4px;letter-spacing:.5px">${m.lbl}</div>
+      </div>`).join("");
+  }
+
+  if (!all.length) {
+    feed.innerHTML = `<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">Nenhuma operação registrada</div></div>`;
+    return;
+  }
+
+  const statusColor = { profit:"var(--green)", loss:"var(--red)", closed:"#445544", active:"#00c8ff" };
+  const statusLabel = { profit:"LUCRO", loss:"LOSS", closed:"FECHADO", active:"ATIVO" };
+
+  feed.innerHTML = all.map(s => {
+    const sc  = statusColor[s.status] || "#fff";
+    const sl  = statusLabel[s.status] || s.status;
+    const pct = s.profit_pct || s.profitPct || null;
+    return `
+      <div class="signal-row${s.status==="profit"?" profit":s.status==="loss"?" loss":""}">
+        <div class="signal-row-left">
+          <div class="row-pair">${s.pair}</div>
+          <div class="row-meta">${s.date||new Date(s.created_at||Date.now()).toLocaleDateString("pt-BR")||""}</div>
+          ${s.time_to_hit||s.timeToHit ? `<div style="font-size:9px;color:var(--text4);font-family:var(--font-mono)">${s.time_to_hit||s.timeToHit}</div>` : ""}
+        </div>
+        <div class="signal-row-right">
+          ${typeBadgeHTML(s.type)}
+          <div style="font-family:var(--font-mono);font-size:${s.status==="profit"?"13px":"11px"};font-weight:${s.status==="profit"?"700":"400"};color:${sc};margin-top:4px">
+            ${s.status==="profit" && pct ? pct : sl}
+          </div>
+          <div style="font-size:9px;color:var(--text4);margin-top:2px;font-family:var(--font-mono)">${s.hit||0}/${(s.targets||[]).length} alvos</div>
+        </div>
+      </div>`;
+  }).join("");
 }
 
 // ── RENDER EDUCATION ──────────────────────────────────────────────────────────
@@ -865,35 +915,6 @@ function buildDomChart(data) {
   });
 }
 
-// ── MANUAL SIGNAL (local) ─────────────────────────────────────────────────────
-function addManualSignal() {
-  const entry = document.getElementById("fEntry").value.trim();
-  if (!entry) { alert("Informe o preço de entrada!"); return; }
-
-  const { time, date } = tsNow();
-  const signal = {
-    id: -(Date.now()),
-    pair:     document.getElementById("fPair").value,
-    type:     document.getElementById("fType").value,
-    entry, leverage: document.getElementById("fLeverage").value,
-    stoploss: document.getElementById("fSL").value || "Hold",
-    reason:   document.getElementById("fNote").value || "Sinal manual do trader",
-    targets:  ["3%","20%","40%","60%","80%","100%","120%","140%","160%","180%","200%+"],
-    timeframe:"—", setup:"MANUAL", confidence:3,
-    status:"active", hit:0,
-    time, date, created_at: new Date().toISOString(),
-    source: "admin",
-  };
-
-  state.signals.unshift(signal);
-  updateStats(); renderAlerts(); renderSinais();
-
-  document.getElementById("fEntry").value = "";
-  document.getElementById("fSL").value    = "";
-  document.getElementById("fNote").value  = "";
-  hide("modalOverlay");
-}
-
 // ── CHAT ──────────────────────────────────────────────────────────────────────
 async function sendChat() {
   const input = document.getElementById("chatInput");
@@ -979,10 +1000,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     window.location.href = "/login.html";
   });
 
-  document.getElementById("btnOpenManual")?.addEventListener("click", ()=>show("modalOverlay"));
-  document.getElementById("modalClose")?.addEventListener("click", ()=>hide("modalOverlay"));
-  document.getElementById("modalOverlay")?.addEventListener("click", e=>{ if(e.target===e.currentTarget) hide("modalOverlay"); });
-  document.getElementById("submitManual")?.addEventListener("click", addManualSignal);
 
   document.getElementById("chatFab")?.addEventListener("click", ()=>{ show("chatPanel"); hide("chatFab"); });
   document.getElementById("chatClose")?.addEventListener("click", ()=>{ hide("chatPanel"); show("chatFab"); });
