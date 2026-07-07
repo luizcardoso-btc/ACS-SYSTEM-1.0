@@ -19,8 +19,7 @@ const API_KEY   = process.env.ANTHROPIC_API_KEY;
 const ADMIN_KEY = process.env.ADMIN_KEY;
 
 if (!API_KEY) {
-  console.error("\n❌ ANTHROPIC_API_KEY não encontrada no .env\n");
-  process.exit(1);
+  console.warn("\n⚠️  ANTHROPIC_API_KEY não encontrada — chat IA desativado\n");
 }
 
 // ── Admin middleware ───────────────────────────────────────────────────────────
@@ -363,20 +362,50 @@ app.post("/api/claude", auth.requireAuth, async (req, res) => {
 });
 
 // ══════════════════════════════════════════════
-// PÁGINAS
+// PÁGINAS — detecta paths automaticamente
 // ══════════════════════════════════════════════
-app.get("/admin.html", (req, res) => {
-  res.sendFile(path.join(__dirname, "admin-pages", "admin.html"));
+const fs2 = require("fs");
+
+function findFile(filename) {
+  const candidates = [
+    path.join(__dirname, filename),
+    path.join(__dirname, "public", filename),
+    path.join(__dirname, "admin-pages", filename),
+    path.join(process.cwd(), filename),
+    path.join(process.cwd(), "public", filename),
+    path.join("/app", filename),
+    path.join("/app/public", filename),
+  ];
+  for (const p of candidates) {
+    try { if (fs2.existsSync(p)) return p; } catch {}
+  }
+  return null;
+}
+
+// Log de diagnóstico no boot
+["index.html","login.html","app.js","style.css","login.css","login.js","admin.html"].forEach(f => {
+  const found = findFile(f);
+  console.log(`   ${f}: ${found ? "✅ "+found : "❌ NÃO ENCONTRADO"}`);
 });
 
-const PUBLIC_DIR = path.join(__dirname, "public");
+function serveFile(filename, res) {
+  const filePath = findFile(filename);
+  if (!filePath) {
+    return res.status(404).send(`Arquivo ${filename} não encontrado. Verifique se está na raiz do repositório GitHub.`);
+  }
+  res.sendFile(filePath);
+}
 
-app.get("/",           auth.requirePageAuth, (req, res) => res.sendFile(path.join(PUBLIC_DIR, "index.html")));
-app.get("/index.html", auth.requirePageAuth, (req, res) => res.sendFile(path.join(PUBLIC_DIR, "index.html")));
-app.get("/app.js",     auth.requirePageAuth, (req, res) => res.sendFile(path.join(PUBLIC_DIR, "app.js")));
-app.get("/style.css",  auth.requirePageAuth, (req, res) => res.sendFile(path.join(PUBLIC_DIR, "style.css")));
+app.get("/admin.html",   (req, res) => serveFile("admin.html", res));
+app.get(["/","/index.html"], auth.requirePageAuth, (req, res) => serveFile("index.html", res));
+app.get("/app.js",       auth.requirePageAuth, (req, res) => serveFile("app.js", res));
+app.get("/style.css",    auth.requirePageAuth, (req, res) => serveFile("style.css", res));
+app.get("/login.css",    (req, res) => serveFile("login.css", res));
+app.get("/login.js",     (req, res) => serveFile("login.js", res));
 
-app.use(express.static(PUBLIC_DIR));
+// Serve estáticos da raiz + subpastas
+app.use(express.static(__dirname));
+app.use(express.static(path.join(__dirname, "public")));
 
 // ══════════════════════════════════════════════
 app.listen(PORT, () => {
