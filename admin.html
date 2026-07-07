@@ -534,13 +534,50 @@ async function deleteSignal(id) {
 }
 
 async function closeSignal(id) {
-  if (!confirm(`Fechar sinal #${id} como encerrado?`)) return;
+  const sig = allSignals.find(s => s.id === id);
+  if (!sig) return;
+
+  // Pergunta o resultado
+  const resultado = prompt(
+    `Fechar sinal #${id} — ${sig.pair}\n\n` +
+    `Qual foi o resultado?\n\n` +
+    `Digite:\n` +
+    `  • Um número positivo para LUCRO  (ex: 40 para +40%)\n` +
+    `  • Um número negativo para LOSS   (ex: -3 para -3%)\n` +
+    `  • 0 para BREAKEVEN\n` +
+    `  • Deixe vazio para cancelar`,
+    sig.hit > 0 ? String(parseFloat((sig.targets?.[sig.hit-1]||"0").replace(/[^0-9.-]/g,""))) : ""
+  );
+  if (resultado === null) return; // cancelou
+
+  const pct    = parseFloat(resultado);
+  const isLoss = pct < 0;
+  const status = isLoss ? "loss" : "profit";
+  const profitPct = isLoss ? resultado+"%" : "+"+Math.abs(pct)+"%";
+  const now    = new Date().toISOString();
+
   await fetch(`/api/admin/signals/${id}`, {
     method:"PATCH",
     headers:{"Content-Type":"application/json","x-admin-key":ADMIN_KEY},
-    body:JSON.stringify({ status:"closed" }),
+    body: JSON.stringify({
+      status,
+      profit_pct:  isLoss ? null : profitPct,
+      result_pct:  pct,
+      closed_at:   now,
+      time_to_hit: calcDuration(sig.created_at, now),
+    }),
   });
   loadSignals();
+}
+
+function calcDuration(from, to) {
+  const ms  = new Date(to) - new Date(from);
+  const min = Math.floor(ms / 60000);
+  if (min < 60)  return min + " Min";
+  const h = Math.floor(min / 60), m = min % 60;
+  if (h < 24)    return `${h}h ${m}min`;
+  const d = Math.floor(h / 24);
+  return `${d}d ${h%24}h`;
 }
 
 async function checkTargetsNow() {
