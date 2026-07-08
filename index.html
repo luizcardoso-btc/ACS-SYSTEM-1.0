@@ -5,6 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
   <title>ACS SYSTEM</title>
   <link rel="stylesheet" href="style.css"/>
+    <!-- PWA + iOS Safari Push -->
+  <link rel="manifest" href="/manifest.json"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="ACS SYSTEM"/>
+  <meta name="theme-color" content="#060810"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <link rel="apple-touch-icon" href="/icon-192.png"/>
+  <link rel="apple-touch-icon" sizes="192x192" href="/icon-192.png"/>
+  <link rel="apple-touch-icon" sizes="512x512" href="/icon-512.png"/>
+  <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png"/>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Barlow:wght@300;400;500;600&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
@@ -62,12 +73,18 @@
                   <stop offset="100%" stop-color="#00cc66"/>
                 </linearGradient>
               </defs>
-              <circle cx="100" cy="100" r="77" stroke="url(#lg)" stroke-width="9" fill="none"/>
-              <rect x="78" y="14" width="11" height="23" rx="5.5" fill="url(#lg)"/>
-              <rect x="111" y="14" width="11" height="23" rx="5.5" fill="url(#lg)"/>
-              <rect x="78" y="163" width="11" height="23" rx="5.5" fill="url(#lg)"/>
-              <rect x="111" y="163" width="11" height="23" rx="5.5" fill="url(#lg)"/>
-              <path d="M100 44 L154 140 H46 Z" stroke="url(#lg)" stroke-width="9" stroke-linejoin="round" fill="none"/>
+              <!-- Círculo -->
+              <circle cx="100" cy="100" r="72" stroke="url(#lg)" stroke-width="9" fill="none"/>
+              <!-- Pino superior esquerdo -->
+              <rect x="72" y="18" width="12" height="22" rx="6" fill="url(#lg)"/>
+              <!-- Pino superior direito -->
+              <rect x="116" y="18" width="12" height="22" rx="6" fill="url(#lg)"/>
+              <!-- Pino inferior esquerdo -->
+              <rect x="72" y="160" width="12" height="22" rx="6" fill="url(#lg)"/>
+              <!-- Pino inferior direito -->
+              <rect x="116" y="160" width="12" height="22" rx="6" fill="url(#lg)"/>
+              <!-- Λ (lambda) — aberto embaixo, SEM base -->
+              <polyline points="55,148 100,52 145,148" stroke="url(#lg)" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
             </svg>
           </div>
           <div class="brand-text">
