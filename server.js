@@ -18,6 +18,44 @@ const PORT = process.env.PORT || 3000;
 const API_KEY   = process.env.ANTHROPIC_API_KEY;
 const ADMIN_KEY = process.env.ADMIN_KEY;
 
+// ══════════════════════════════════════════════
+// ONESIGNAL — Push Notifications
+// ══════════════════════════════════════════════
+const ONESIGNAL_APP_ID  = process.env.ONESIGNAL_APP_ID  || "";
+const ONESIGNAL_API_KEY = process.env.ONESIGNAL_API_KEY || "";
+
+async function sendPushNotification({ title, message, url = "/" }) {
+  if (!ONESIGNAL_APP_ID || !ONESIGNAL_API_KEY) {
+    console.warn("⚠️  OneSignal não configurado — notificação ignorada");
+    return;
+  }
+  try {
+    const res = await fetch("https://onesignal.com/api/v1/notifications", {
+      method: "POST",
+      headers: {
+        "Content-Type":  "application/json",
+        "Authorization": `Key ${ONESIGNAL_API_KEY}`,
+      },
+      body: JSON.stringify({
+        app_id:             ONESIGNAL_APP_ID,
+        included_segments:  ["All"],          // envia para todos os assinantes
+        headings:           { pt: title,   en: title   },
+        contents:           { pt: message, en: message },
+        url:                process.env.APP_URL ? process.env.APP_URL + url : url,
+        chrome_web_icon:    process.env.APP_URL ? process.env.APP_URL + "/icon-192.png" : "",
+        priority:           10,               // alta prioridade
+      }),
+    });
+    const data = await res.json();
+    if (data.errors) console.error("OneSignal erro:", data.errors);
+    else console.log(`📲 Push enviado: "${title}" → ${data.recipients || 0} dispositivos`);
+    return data;
+  } catch (err) {
+    console.error("OneSignal fetch erro:", err.message);
+  }
+}
+
+
 if (!API_KEY) {
   console.warn("\n⚠️  ANTHROPIC_API_KEY não encontrada — chat IA desativado\n");
 }
@@ -129,14 +167,33 @@ async function fetchPrices() {
 async function checkSignalTargets() {
   const active = db.signals.active();
   if (active.length === 0) return;
-
   const prices = await fetchPrices();
   if (!prices) return;
 
   for (const sig of active) {
     const priceObj = prices[sig.pair];
     if (!priceObj) continue;
-    db.signals.checkTargets(sig.id, priceObj.price);
+    const hitBefore = sig.hit || 0;
+    const updated   = db.signals.checkTargets(sig.id, priceObj.price);
+    if (!updated) continue;
+
+    // Novo alvo atingido
+    if (updated.hit > hitBefore) {
+      const alvoVal = (updated.targets || [])[updated.hit - 1] || "?";
+      sendPushNotification({
+        title:   `🎯 Alvo ${updated.hit} atingido — ${sig.pair}`,
+        message: `Meta de ${alvoVal} alcançada! ${updated.hit}/${(updated.targets||[]).length} alvos concluídos.`,
+        url:     "/",
+      });
+    }
+    // Sinal fechou com lucro automático
+    if (updated.status === "profit" && sig.status === "active") {
+      sendPushNotification({
+        title:   `✅ Lucro confirmado — ${sig.pair}`,
+        message: `Resultado: ${updated.profit_pct || "—"} em ${updated.time_to_hit || "—"}. Parabéns! 🚀`,
+        url:     "/",
+      });
+    }
   }
 }
 
@@ -265,6 +322,16 @@ app.post("/api/admin/signals", requireAdmin, (req, res) => {
     return res.status(400).json({ error:"missing_fields", message:"Par e entrada são obrigatórios." });
 
   const sig = db.signals.create({ pair, type, entry, leverage, stoploss, targets, reason, timeframe, setup, confidence, source: source || "admin" });
+
+  // 📲 Push notification para todos os membros
+  const tipoBr   = (type === "SHORT") ? "🔴 VENDA" : "🟢 COMPRA";
+  const alvosStr = (targets || []).slice(0, 3).join(" · ");
+  sendPushNotification({
+    title:   `📡 Novo Sinal — ${pair}`,
+    message: `${tipoBr} · Entrada: ${entry} · Alav: ${leverage} · Alvos: ${alvosStr}`,
+    url:     "/",
+  });
+
   res.json({ ok:true, signal:sig });
 });
 
@@ -396,6 +463,14 @@ function serveFile(filename, res) {
   res.sendFile(filePath);
 }
 
+app.get("/OneSignalSDKWorker.js", (req, res) => {
+  // Service Worker deve ser público e servido como JS
+  const filePath = findFile("OneSignalSDKWorker.js");
+  if (!filePath) return res.status(404).send("OneSignalSDKWorker.js não encontrado");
+  res.setHeader("Content-Type", "application/javascript");
+  res.setHeader("Service-Worker-Allowed", "/");
+  res.sendFile(filePath);
+});
 app.get("/admin.html",   (req, res) => serveFile("admin.html", res));
 app.get(["/","/index.html"], auth.requirePageAuth, (req, res) => serveFile("index.html", res));
 app.get("/app.js",       auth.requirePageAuth, (req, res) => serveFile("app.js", res));
