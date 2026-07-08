@@ -8,6 +8,72 @@
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Barlow:wght@300;400;500;600&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script>
+    window.OneSignalDeferred = window.OneSignalDeferred || [];
+    OneSignalDeferred.push(async function(OneSignal) {
+      await OneSignal.init({
+        appId: "SEU_ONESIGNAL_APP_ID",  // ← cole seu App ID aqui
+        safari_web_id: "",               // ← opcional para Safari macOS
+        notifyButton: { enable: false }, // desativa botão flutuante (usamos prompt nativo)
+        promptOptions: {
+          slidedown: {
+            prompts: [{
+              type: "push",
+              autoPrompt: true,
+              text: {
+                actionMessage: "Receba alertas de sinais cripto em tempo real.",
+                acceptButton:  "Ativar Alertas",
+                cancelButton:  "Agora não",
+              },
+              delay: { pageViews: 1, timeDelay: 5 },  // pede após 5s na 1ª visita
+            }]
+          }
+        }
+      });
+    });
+  </script>
+  <!-- OneSignal Web Push SDK -->
+  <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
+  <script>
+    window.OneSignalDeferred = window.OneSignalDeferred || [];
+    OneSignalDeferred.push(async function(OneSignal) {
+      await OneSignal.init({
+        appId: "c76816ad-e68e-4842-bf90-ac84c98cfd6a",
+        serviceWorkerPath: "/OneSignalSDKWorker.js",
+        notifyButton: { enable: false },
+        promptOptions: {
+          slidedown: {
+            prompts: [{
+              type: "push",
+              autoPrompt: true,
+              text: {
+                actionMessage: "Ative os alertas e receba sinais cripto em tempo real, direto no seu celular.",
+                acceptButton:  "✅ Ativar Alertas",
+                cancelButton:  "Agora não",
+              },
+              delay: {
+                pageViews: 1,
+                timeDelay: 4,
+              },
+            }]
+          }
+        },
+        welcomeNotification: {
+          title:   "ACS SYSTEM",
+          message: "Alertas ativados! Você receberá sinais em tempo real. 📡",
+        },
+      });
+
+      // Identifica o usuário logado no OneSignal (para segmentação futura)
+      try {
+        const me = await fetch("/api/auth/me").then(r => r.ok ? r.json() : null);
+        if (me?.email) {
+          await OneSignal.login(me.email);
+          await OneSignal.User.addTags({ plano: me.plan || "ativo" });
+        }
+      } catch(e) { /* silencioso */ }
+    });
+  </script>
 </head>
 <body>
   <div id="app">
