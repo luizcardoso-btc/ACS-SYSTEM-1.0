@@ -1,0 +1,1439 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>ACS — Scanner Wyckoff + IA</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
+<style>
+:root{
+  --bg:#060810;--bg2:#090C18;--bg3:#0d1526;
+  --border:rgba(255,255,255,.08);--border2:rgba(59,130,246,.25);
+  --blue:#3B82F6;--blue2:#60A5FA;
+  --green:#00FF88;--red:#FF4466;--yellow:#FFD700;--purple:#9B59B6;
+  --text:#CBD5E1;--text2:#64748B;--text3:#334155;
+  --f:'Inter',sans-serif;--mono:'Share Tech Mono',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:var(--f);min-height:100vh;-webkit-font-smoothing:antialiased;}
+
+/* Gate */
+.gate{max-width:360px;margin:80px auto;text-align:center;padding:0 20px;}
+.gate h1{font-size:18px;font-weight:700;color:#fff;margin-bottom:6px;}
+.gate p{color:var(--text2);font-family:var(--mono);font-size:11px;margin-bottom:18px;}
+.gate input{width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:11px 14px;color:#fff;font-size:14px;font-family:var(--f);outline:none;margin-bottom:10px;}
+.gate input:focus{border-color:var(--border2);}
+.err{color:var(--red);font-size:12px;margin-top:8px;}
+
+/* App layout */
+.app{display:none;max-width:1280px;margin:0 auto;padding:20px;}
+.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--border);}
+.header h1{font-size:17px;font-weight:700;color:#fff;}
+.header p{font-size:11px;color:var(--text2);font-family:var(--mono);margin-top:2px;}
+.live-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);animation:blink 2s infinite;margin-right:6px;}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* Buttons */
+.btn{border:none;border-radius:8px;padding:9px 18px;font-weight:600;cursor:pointer;font-family:var(--f);font-size:13px;transition:.15s;display:inline-flex;align-items:center;gap:6px;}
+.btn-primary{background:var(--blue);color:#fff;}
+.btn-primary:hover{background:var(--blue2);}
+.btn-ghost{background:rgba(255,255,255,.05);color:var(--text);border:1px solid var(--border);}
+.btn-ghost:hover{border-color:var(--border2);color:var(--blue2);}
+.btn-purple{background:var(--purple);color:#fff;}
+.btn-sm{padding:5px 12px;font-size:12px;}
+.btn:disabled{opacity:.4;cursor:not-allowed;}
+
+/* Cards base */
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:18px;}
+.card-title{font-family:var(--mono);font-size:10px;color:var(--text2);letter-spacing:1px;margin-bottom:14px;}
+
+/* Conta stats */
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px;}
+.stat-box{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px;}
+.stat-val{font-family:var(--mono);font-size:22px;font-weight:700;color:#fff;display:block;}
+.stat-lbl{font-size:11px;color:var(--text2);margin-top:3px;display:block;letter-spacing:.3px;}
+
+/* Scanner controls */
+.scanner-ctrl{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;}
+.scanner-ctrl select,.scanner-ctrl input{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:#fff;font-family:var(--mono);font-size:12px;outline:none;}
+.scanner-ctrl select:focus,.scanner-ctrl input:focus{border-color:var(--border2);}
+.progress-bar{flex:1;min-width:200px;}
+.progress-track{height:6px;background:rgba(255,255,255,.06);border-radius:3px;overflow:hidden;}
+.progress-fill{height:100%;background:linear-gradient(90deg,var(--blue),var(--green));border-radius:3px;transition:width .3s ease;width:0%;}
+.progress-label{font-family:var(--mono);font-size:10px;color:var(--text2);margin-top:4px;}
+
+/* Oportunidades grid */
+.opps-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px;margin-bottom:16px;}
+
+/* Opp card */
+.opp-card{background:var(--bg2);border:1px solid var(--border);border-radius:14px;overflow:hidden;transition:.2s;cursor:pointer;}
+.opp-card:hover{border-color:rgba(59,130,246,.3);transform:translateY(-2px);}
+.opp-card.long-card{border-left:3px solid var(--green);}
+.opp-card.short-card{border-left:3px solid var(--red);}
+.opp-card.neutral-card{border-left:3px solid var(--text2);}
+
+.opp-header{display:flex;justify-content:space-between;align-items:flex-start;padding:14px 14px 10px;border-bottom:1px solid var(--border);}
+.opp-pair{font-size:16px;font-weight:700;color:#fff;}
+.opp-price{font-family:var(--mono);font-size:13px;color:var(--text2);}
+.opp-badges{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:.5px;}
+.badge-long{background:rgba(0,255,136,.1);color:var(--green);border:1px solid rgba(0,255,136,.2);}
+.badge-short{background:rgba(255,68,102,.1);color:var(--red);border:1px solid rgba(255,68,102,.2);}
+.badge-neutral{background:rgba(255,255,255,.06);color:var(--text2);}
+.badge-phase{background:rgba(155,89,182,.1);color:#C39BD3;border:1px solid rgba(155,89,182,.2);}
+
+.opp-body{padding:12px 14px;}
+
+/* Score visual */
+.score-wrap{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
+.score-num{font-family:var(--mono);font-size:22px;font-weight:700;min-width:40px;}
+.score-bar{flex:1;height:6px;background:rgba(255,255,255,.06);border-radius:3px;overflow:hidden;}
+.score-fill{height:100%;border-radius:3px;}
+.score-lbl{font-family:var(--mono);font-size:10px;color:var(--text2);min-width:60px;text-align:right;}
+
+/* Indicadores linha */
+.inds-row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;}
+.ind-chip{background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-family:var(--mono);font-size:10px;}
+
+/* Wyckoff fase */
+.wyckoff-badge{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:6px;font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.5px;margin-bottom:10px;}
+.wyckoff-acc{background:rgba(0,255,136,.08);color:var(--green);border:1px solid rgba(0,255,136,.2);}
+.wyckoff-dis{background:rgba(255,68,102,.08);color:var(--red);border:1px solid rgba(255,68,102,.2);}
+.wyckoff-markup{background:rgba(59,130,246,.08);color:var(--blue2);border:1px solid rgba(59,130,246,.2);}
+.wyckoff-markdown{background:rgba(255,107,53,.08);color:#FF6B35;border:1px solid rgba(255,107,53,.2);}
+.wyckoff-none{background:rgba(255,255,255,.04);color:var(--text2);}
+
+/* Mini MTF */
+.mtf-mini{display:flex;gap:3px;margin-bottom:10px;flex-wrap:wrap;}
+.mtf-dot{width:24px;height:24px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:8px;font-weight:700;}
+.mtf-bull{background:rgba(0,255,136,.15);color:var(--green);}
+.mtf-bear{background:rgba(255,68,102,.15);color:var(--red);}
+
+/* IA resumo */
+.opp-ia{font-size:12px;color:var(--text2);line-height:1.6;padding-top:8px;border-top:1px solid var(--border);}
+
+/* SR levels */
+.sr-levels{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;}
+.sr-chip{font-family:var(--mono);font-size:10px;padding:2px 8px;border-radius:4px;}
+.sr-sup{background:rgba(0,200,255,.08);color:var(--blue2);}
+.sr-res{background:rgba(255,107,53,.08);color:#FF6B35;}
+
+/* Análise completa modal */
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.8);display:none;align-items:flex-start;justify-content:center;z-index:200;padding:20px;overflow-y:auto;}
+.modal.open{display:flex;}
+.modal-box{background:var(--bg2);border:1px solid var(--border);border-radius:16px;width:100%;max-width:760px;padding:24px;margin:auto;}
+.modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;}
+.modal-title{font-size:17px;font-weight:700;color:#fff;}
+
+/* Análise IA completa */
+.ia-full{background:rgba(155,89,182,.06);border:1px solid rgba(155,89,182,.2);border-radius:12px;padding:16px;margin-top:14px;}
+.ia-title{font-family:var(--mono);font-size:10px;color:var(--purple);letter-spacing:1px;margin-bottom:12px;}
+.ia-text{font-size:14px;color:var(--text);line-height:1.8;white-space:pre-wrap;}
+
+/* Loading dots */
+.dots span{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--purple);animation:dd .8s infinite;}
+.dots span:nth-child(2){animation-delay:.15s;}
+.dots span:nth-child(3){animation-delay:.3s;}
+@keyframes dd{0%,80%,100%{transform:scale(.6);opacity:.4}40%{transform:scale(1);opacity:1}}
+
+/* Mini candle chart */
+.candle-chart{height:60px;display:flex;align-items:flex-end;gap:2px;padding:4px 0;overflow:hidden;}
+.c-bar{flex:1;min-width:4px;border-radius:1px 1px 0 0;opacity:.8;}
+.c-up{background:var(--green);}
+.c-dn{background:var(--red);}
+
+/* Posições abertas */
+.pos-mini{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);}
+.pos-mini:last-child{border:none;}
+
+/* Shimmer */
+.shimmer{height:200px;border-radius:14px;background:linear-gradient(90deg,var(--bg2) 25%,var(--bg3) 50%,var(--bg2) 75%);background-size:200% 100%;animation:sh 1.5s infinite;margin-bottom:10px;}
+@keyframes sh{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
+/* Empty */
+.empty{text-align:center;padding:40px;color:var(--text2);}
+.empty-icon{font-size:32px;margin-bottom:10px;}
+
+@media(max-width:700px){.stats-row{grid-template-columns:1fr 1fr;}.opps-grid{grid-template-columns:1fr;}.app{padding:12px;}}
+</style>
+</head>
+<body>
+
+<!-- GATE -->
+<div id="gate" class="gate">
+  <svg width="48" height="48" viewBox="0 0 200 200" fill="none" style="margin-bottom:16px;filter:drop-shadow(0 0 10px rgba(59,130,246,.4))">
+    <defs><linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#60A5FA"/><stop offset="100%" stop-color="#818CF8"/></linearGradient></defs>
+    <circle cx="100" cy="100" r="77" stroke="url(#g)" stroke-width="9" fill="none"/>
+    <rect x="78" y="14" width="11" height="23" rx="5.5" fill="url(#g)"/>
+    <rect x="111" y="14" width="11" height="23" rx="5.5" fill="url(#g)"/>
+    <rect x="78" y="163" width="11" height="23" rx="5.5" fill="url(#g)"/>
+    <rect x="111" y="163" width="11" height="23" rx="5.5" fill="url(#g)"/>
+    <polyline points="55,148 100,52 145,148" stroke="url(#g)" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  </svg>
+  <h1>ACS — Scanner Wyckoff</h1>
+  <p>FERRAMENTA PRIVADA · ANÁLISE AUTOMÁTICA COM IA</p>
+  <input type="password" id="keyInput" placeholder="Admin Key..." onkeydown="if(event.key==='Enter')unlock()"/>
+  <button class="btn btn-primary" onclick="unlock()" style="width:100%;justify-content:center;padding:11px">ENTRAR</button>
+  <div class="err" id="gateErr"></div>
+</div>
+
+<!-- APP -->
+<div class="app" id="app">
+
+  <!-- Header -->
+  <div class="header">
+    <div>
+      <h1><span class="live-dot"></span>ACS Scanner — Wyckoff + IA</h1>
+      <p>ANÁLISE AUTOMÁTICA · BYBIT FUTUROS · DADOS REAIS</p>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <span style="font-family:var(--mono);font-size:10px;color:var(--text2)" id="lastUpd"></span>
+      <button class="btn btn-ghost btn-sm" onclick="logout()">Sair</button>
+    </div>
+  </div>
+
+  <!-- Conta -->
+  <div class="stats-row" id="accountStats">
+    <div class="shimmer" style="height:70px"></div>
+    <div class="shimmer" style="height:70px"></div>
+    <div class="shimmer" style="height:70px"></div>
+    <div class="shimmer" style="height:70px"></div>
+  </div>
+
+  <!-- Posições abertas (se tiver) -->
+  <div id="positionsWrap" style="display:none" class="card" style="margin-bottom:16px">
+    <div class="card-title">POSIÇÕES ABERTAS AGORA</div>
+    <div id="positionsList"></div>
+  </div>
+
+  <!-- Scanner controls -->
+  <div class="scanner-ctrl">
+    <select id="tfMain" title="Timeframe principal">
+      <option value="60" selected>1H</option>
+      <option value="240">4H</option>
+      <option value="D">1D</option>
+    </select>
+    <select id="pairsSet">
+      <option value="top20">Top 20 pares</option>
+      <option value="top10">Top 10 pares</option>
+      <option value="custom">Personalizado</option>
+    </select>
+    <input type="text" id="customPairs" placeholder="BTC,ETH,SOL,..." style="display:none;min-width:200px"/>
+    <button class="btn btn-purple" id="btnScan" onclick="startScan()">
+      🔍 Varrer Mercado com Wyckoff + IA
+    </button>
+    <div class="progress-bar" id="progressWrap" style="display:none">
+      <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+      <div class="progress-label" id="progressLabel">Iniciando...</div>
+    </div>
+  </div>
+
+  <!-- Legenda -->
+  <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;padding:0 2px">
+    <span style="font-family:var(--mono);font-size:10px;color:var(--text2)">FASE WYCKOFF:</span>
+    <span class="badge badge-phase" style="background:rgba(0,255,136,.08);color:var(--green)">ACUMULAÇÃO</span>
+    <span class="badge badge-phase" style="background:rgba(59,130,246,.08);color:var(--blue2)">MARKUP</span>
+    <span class="badge badge-phase" style="background:rgba(255,68,102,.08);color:var(--red)">DISTRIBUIÇÃO</span>
+    <span class="badge badge-phase" style="background:rgba(255,107,53,.08);color:#FF6B35">MARKDOWN</span>
+    <span style="font-family:var(--mono);font-size:10px;color:var(--text2);margin-left:10px">SCORE MTF:</span>
+    <span style="font-family:var(--mono);font-size:10px;color:var(--green)">8-10 = FORTE</span>
+    <span style="font-family:var(--mono);font-size:10px;color:var(--yellow)">5-7 = MÉDIO</span>
+    <span style="font-family:var(--mono);font-size:10px;color:var(--red)">1-4 = FRACO</span>
+  </div>
+
+  <!-- Oportunidades -->
+  <div id="oppsGrid" class="opps-grid">
+    <div class="empty"><div class="empty-icon">🔍</div>Clique em "Varrer Mercado" para iniciar a análise automática com Wyckoff + IA</div>
+  </div>
+</div>
+
+<!-- Modal análise completa -->
+<div class="modal" id="modal">
+  <div class="modal-box">
+    <div class="modal-header">
+      <div class="modal-title" id="modalTitle">Análise Completa</div>
+      <button class="btn btn-ghost btn-sm" onclick="closeModal()">✕ Fechar</button>
+    </div>
+
+    <!-- Dados técnicos -->
+    <div id="modalIndicators"></div>
+
+    <!-- MTF Table completa -->
+    <div id="modalMTF" style="margin:14px 0"></div>
+
+    <!-- S/R -->
+    <div id="modalSR" style="margin-bottom:14px"></div>
+
+    <!-- Mini chart -->
+    <div id="modalChart" style="margin-bottom:14px"></div>
+
+    <!-- Análise IA completa -->
+    <div class="ia-full">
+      <div class="ia-title">🤖 ANÁLISE WYCKOFF + SMC COM IA</div>
+      <div id="modalIA"><div style="display:flex;align-items:center;gap:8px;color:var(--purple)"><div class="dots"><span></span><span></span><span></span></div> Analisando com IA...</div></div>
+    </div>
+
+    <!-- Botão publicar sinal -->
+    <div id="modalActions" style="margin-top:16px;display:flex;gap:8px"></div>
+  </div>
+</div>
+
+<script>
+// ── Config ────────────────────────────────────────────────────────
+const PAIRS_TOP20 = [
+  "BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT",
+  "AVAXUSDT","LINKUSDT","DOTUSDT","ADAUSDT","MATICUSDT",
+  "INJUSDT","TONUSDT","SUIUSDT","ARBUSDT","OPUSDT",
+  "NEARUSDT","APTUSDT","TIAUSDT","WLDUSDT","DOGEUSDT"
+];
+const PAIRS_TOP10 = PAIRS_TOP20.slice(0, 10);
+
+const TF_LABELS = {"15":"15M","60":"1H","120":"2H","240":"4H","360":"6H","720":"12H","D":"1D","W":"1W"};
+const MTF_SEQUENCE = ["15","60","240","720","D","W"];
+
+let ADMIN_KEY = localStorage.getItem("bybit_key") || "";
+let scanResults = [];
+let currentModal = null;
+
+// ── Gate ─────────────────────────────────────────────────────────
+async function unlock() {
+  const key = document.getElementById("keyInput").value.trim();
+  const res = await fetch("/api/admin/users", { headers:{"x-admin-key": key} });
+  if (!res.ok) { document.getElementById("gateErr").textContent = "Chave inválida."; return; }
+  ADMIN_KEY = key;
+  localStorage.setItem("bybit_key", key);
+  document.getElementById("gate").style.display = "none";
+  document.getElementById("app").style.display  = "block";
+  loadAccount();
+  loadPositions();
+}
+function logout() { localStorage.removeItem("bybit_key"); location.reload(); }
+if (ADMIN_KEY) {
+  document.getElementById("gate").style.display = "none";
+  document.getElementById("app").style.display  = "block";
+  loadAccount(); loadPositions();
+}
+
+// Custom pairs toggle
+document.getElementById("pairsSet").addEventListener("change", function() {
+  document.getElementById("customPairs").style.display = this.value === "custom" ? "" : "none";
+});
+
+// ── API helper ────────────────────────────────────────────────────
+async function bybitAPI(endpoint, params = {}) {
+  const qs  = new URLSearchParams({ endpoint, ...params }).toString();
+  const res = await fetch(`/api/bybit/proxy?${qs}`, { headers:{"x-admin-key": ADMIN_KEY} });
+  if (!res.ok) throw new Error(`Bybit API ${res.status}`);
+  return res.json();
+}
+
+// ── Conta ─────────────────────────────────────────────────────────
+async function loadAccount() {
+  try {
+    const data = await bybitAPI("/v5/account/wallet-balance", { accountType:"UNIFIED" });
+    const acc  = data.result?.list?.[0] || {};
+    const total = parseFloat(acc.totalEquity || 0);
+    const pnl   = parseFloat(acc.totalPerpUPL || 0);
+    const margin= parseFloat(acc.totalInitialMargin || 0);
+    const avail = total - margin;
+    const pCol  = pnl >= 0 ? "var(--green)" : "var(--red)";
+    document.getElementById("accountStats").innerHTML = [
+      { val:`$${total.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}`, lbl:"SALDO TOTAL" },
+      { val:`$${avail.toFixed(2)}`, lbl:"DISPONÍVEL" },
+      { val:`${pnl>=0?"+":""}$${pnl.toFixed(2)}`, lbl:"PNL NÃO REALIZADO", col:pCol },
+      { val:`$${margin.toFixed(2)}`, lbl:"MARGEM EM USO" },
+    ].map(s=>`
+      <div class="stat-box">
+        <span class="stat-val" style="color:${s.col||"#fff"}">${s.val}</span>
+        <span class="stat-lbl">${s.lbl}</span>
+      </div>`).join("");
+    document.getElementById("lastUpd").textContent = new Date().toLocaleTimeString("pt-BR");
+  } catch(e) {
+    document.getElementById("accountStats").innerHTML = `<div class="stat-box" style="grid-column:1/-1"><span style="color:var(--red);font-size:12px">Erro ao carregar conta: ${e.message}</span></div>`;
+  }
+}
+
+// ── Posições ──────────────────────────────────────────────────────
+async function loadPositions() {
+  try {
+    const data = await bybitAPI("/v5/position/list", { category:"linear", settleCoin:"USDT" });
+    const list = (data.result?.list || []).filter(p => parseFloat(p.size) > 0);
+    if (!list.length) return;
+    document.getElementById("positionsWrap").style.display = "";
+    document.getElementById("positionsList").innerHTML = list.map(p => {
+      const pnl  = parseFloat(p.unrealisedPnl || 0);
+      const pPct = parseFloat(p.unrealisedPnlPcnt || 0) * 100;
+      const col  = pnl >= 0 ? "var(--green)" : "var(--red)";
+      const side = p.side === "Buy" ? "LONG" : "SHORT";
+      const sCol = p.side === "Buy" ? "var(--green)" : "var(--red)";
+      return `
+        <div class="pos-mini">
+          <div>
+            <span style="font-weight:700;color:#fff">${p.symbol}</span>
+            <span style="font-family:var(--mono);font-size:11px;color:${sCol};margin-left:8px">${side} ${p.leverage}x</span>
+          </div>
+          <div style="font-family:var(--mono);font-size:12px;color:var(--text2)">
+            Entrada $${parseFloat(p.avgPrice).toFixed(4)} · Atual $${parseFloat(p.markPrice).toFixed(4)}
+          </div>
+          <div style="font-family:var(--mono);font-size:13px;font-weight:700;color:${col}">
+            ${pnl>=0?"+":""}$${pnl.toFixed(2)} (${pPct>=0?"+":""}${pPct.toFixed(2)}%)
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick='analyzePosition(${JSON.stringify(p).replace(/'/g,"&apos;")})'>🔍 Analisar</button>
+        </div>`;
+    }).join("");
+  } catch(e) {}
+}
+
+// ── Indicadores ───────────────────────────────────────────────────
+function calcEMA(arr, p) {
+  const k = 2/(p+1); let e = arr[0];
+  return arr.map(v => { e = v*k+e*(1-k); return e; });
+}
+function calcRSI(c, p=14) {
+  let g=0,l=0;
+  for(let i=1;i<=p;i++){const d=c[i]-c[i-1];if(d>0)g+=d;else l-=d;}
+  let ag=g/p,al=l/p;
+  for(let i=p+1;i<c.length;i++){const d=c[i]-c[i-1];ag=(ag*(p-1)+(d>0?d:0))/p;al=(al*(p-1)+(d<0?-d:0))/p;}
+  return al===0?100:100-100/(1+ag/al);
+}
+function calcMACD(c) {
+  const e12=calcEMA(c,12),e26=calcEMA(c,26);
+  const m=e12.map((v,i)=>v-e26[i]);
+  const s=calcEMA(m,9);
+  const h=m.map((v,i)=>v-s[i]);
+  return {macd:m.at(-1),signal:s.at(-1),hist:h.at(-1),histPrev:h.at(-2)};
+}
+function findSR(candles, lb=15) {
+  const H=candles.map(c=>c.h), L=candles.map(c=>c.l);
+  const sup=[], res=[];
+  for(let i=lb;i<candles.length-lb;i++){
+    if(L[i]===Math.min(...L.slice(i-lb,i+lb))){
+      if(!sup.find(s=>Math.abs(s-L[i])/L[i]<0.005)) sup.push(L[i]);
+    }
+    if(H[i]===Math.max(...H.slice(i-lb,i+lb))){
+      if(!res.find(r=>Math.abs(r-H[i])/H[i]<0.005)) res.push(H[i]);
+    }
+  }
+  return { sup:sup.slice(-4), res:res.slice(-4) };
+}
+
+// ── Wyckoff Detection ─────────────────────────────────────────────
+function detectWyckoff(candles, closes, rsi) {
+  const n    = candles.length;
+  const ema50= calcEMA(closes, 50).at(-1);
+  const ema200=calcEMA(closes,200).at(-1);
+  const recentHigh = Math.max(...candles.slice(-50).map(c=>c.h));
+  const recentLow  = Math.min(...candles.slice(-50).map(c=>c.l));
+  const range   = recentHigh - recentLow;
+  const cur     = closes.at(-1);
+  const posInRange = (cur - recentLow) / (range || 1);
+  const vols    = candles.map(c=>c.v);
+  const volAvg  = vols.slice(-20).reduce((a,b)=>a+b,0)/20;
+  const volTrend= vols.slice(-5).reduce((a,b)=>a+b,0)/5 < volAvg * 0.85;
+
+  // Spring: rompeu mínima e voltou
+  const spring = candles.slice(-10).some((c,i,arr)=>{
+    if(i===0)return false;
+    const prev=arr[i-1];
+    return c.l<prev.l && c.c>prev.l && posInRange<0.3;
+  });
+
+  // Upthrust: rompeu máxima e voltou
+  const upthrust = candles.slice(-10).some((c,i,arr)=>{
+    if(i===0)return false;
+    const prev=arr[i-1];
+    return c.h>prev.h && c.c<prev.h && posInRange>0.7;
+  });
+
+  // Fase
+  let fase="INDEFINIDA", faseClass="wyckoff-none";
+  if(posInRange<0.3 && rsi<45 && volTrend) { fase="ACUMULAÇÃO"; faseClass="wyckoff-acc"; }
+  else if(cur>ema200 && cur>ema50 && posInRange>0.5 && rsi>50) { fase="MARKUP"; faseClass="wyckoff-markup"; }
+  else if(posInRange>0.7 && rsi>55 && volTrend) { fase="DISTRIBUIÇÃO"; faseClass="wyckoff-dis"; }
+  else if(cur<ema200 && cur<ema50 && posInRange<0.5 && rsi<50) { fase="MARKDOWN"; faseClass="wyckoff-markdown"; }
+
+  return { fase, faseClass, spring, upthrust, posInRange, ema50, ema200 };
+}
+
+// ── Score de confluência ──────────────────────────────────────────
+function calcScore(wy, rsi, macd, mtfData, candles, closes) {
+  let score=0, signals=[];
+  const cur=closes.at(-1);
+
+  // EMA200
+  if(cur > wy.ema200){ score+=2; signals.push({t:"EMA200 ✅",c:"green"}); }
+  else                { score+=0; signals.push({t:"EMA200 ⛔",c:"red"}); }
+
+  // EMA50
+  if(cur > wy.ema50){ score+=1; signals.push({t:"EMA50 ✅",c:"green"}); }
+  else               { signals.push({t:"EMA50 ⛔",c:"red"}); }
+
+  // RSI
+  if(rsi > 40 && rsi < 70){ score+=1; signals.push({t:`RSI ${rsi.toFixed(0)} ✅`,c:"green"}); }
+  else if(rsi <= 30)       { score+=2; signals.push({t:`RSI ${rsi.toFixed(0)} OS ⚡`,c:"green"}); }
+  else if(rsi >= 70)       { signals.push({t:`RSI ${rsi.toFixed(0)} OC ⚠️`,c:"red"}); }
+  else                     { signals.push({t:`RSI ${rsi.toFixed(0)}`,c:"neutral"}); }
+
+  // MACD
+  if(macd.hist > 0 && macd.hist > macd.histPrev){ score+=2; signals.push({t:"MACD Bull ✅",c:"green"}); }
+  else if(macd.hist < 0 && macd.hist < macd.histPrev){ signals.push({t:"MACD Bear ⛔",c:"red"}); }
+  else signals.push({t:"MACD Neutro",c:"neutral"});
+
+  // Wyckoff
+  if(wy.fase==="ACUMULAÇÃO"){ score+=2; signals.push({t:"ACUM. ⚡",c:"green"}); }
+  else if(wy.fase==="MARKUP"){ score+=1; signals.push({t:"MARKUP ↑",c:"green"}); }
+  else if(wy.fase==="DISTRIBUIÇÃO"){ score+=0; signals.push({t:"DISTRIB. ⚠️",c:"red"}); }
+  else if(wy.fase==="MARKDOWN"){ score+=0; signals.push({t:"MARKDOWN ↓",c:"red"}); }
+
+  // Spring / Upthrust
+  if(wy.spring)  { score+=2; signals.push({t:"SPRING 🔥",c:"green"}); }
+  if(wy.upthrust){ score+=0; signals.push({t:"UPTHRUST ⚠️",c:"red"}); }
+
+  // MTF
+  const bullTFs = mtfData.filter(t=>t.above).length;
+  if(bullTFs >= 5) score += 2;
+  else if(bullTFs >= 3) score += 1;
+
+  // Direção
+  let dir="NEUTRO";
+  if(score >= 7) dir="LONG";
+  else if(score <= 3) dir="SHORT";
+
+  return { score, maxScore:12, signals, bullTFs, dir };
+}
+
+// ── Busca candles ─────────────────────────────────────────────────
+async function fetchCandles(symbol, interval, limit=220) {
+  const data = await bybitAPI("/v5/market/kline", { category:"linear", symbol, interval, limit:String(limit) });
+  return (data.result?.list || []).reverse().map(c=>({
+    t:parseInt(c[0]),o:parseFloat(c[1]),h:parseFloat(c[2]),l:parseFloat(c[3]),c:parseFloat(c[4]),v:parseFloat(c[5])
+  }));
+}
+
+// ── MTF rápido ────────────────────────────────────────────────────
+async function getMTF(symbol) {
+  const results = await Promise.allSettled(
+    MTF_SEQUENCE.map(async tf => {
+      const c = await fetchCandles(symbol, tf, 210);
+      const cl= c.map(x=>x.c);
+      const e = calcEMA(cl,200).at(-1);
+      const r = calcRSI(cl);
+      return { tf, label:TF_LABELS[tf]||tf, ema200:e, rsi:r, above:cl.at(-1)>e };
+    })
+  );
+  return results.filter(r=>r.status==="fulfilled").map(r=>r.value);
+}
+
+// ── SCAN PRINCIPAL ────────────────────────────────────────────────
+async function startScan() {
+  const pairsSet = document.getElementById("pairsSet").value;
+  let pairs;
+  if(pairsSet==="top10") pairs=PAIRS_TOP10;
+  else if(pairsSet==="custom"){
+    const raw=document.getElementById("customPairs").value;
+    pairs=raw.split(",").map(s=>s.trim().toUpperCase().replace("/","")+"USDT".replace("USDTUSDT","USDT")).filter(Boolean);
+  } else pairs=PAIRS_TOP20;
+
+  const tf = document.getElementById("tfMain").value;
+  const btn= document.getElementById("btnScan");
+  btn.disabled=true; btn.textContent="⏳ Varrendo...";
+  document.getElementById("progressWrap").style.display="";
+  document.getElementById("oppsGrid").innerHTML="";
+  scanResults=[];
+
+  for(let i=0; i<pairs.length; i++){
+    const sym = pairs[i];
+    const pct = Math.round((i+1)/pairs.length*100);
+    document.getElementById("progressFill").style.width = pct+"%";
+    document.getElementById("progressLabel").textContent = `Analisando ${sym} (${i+1}/${pairs.length})...`;
+
+    try {
+      const [candles, mtfData] = await Promise.all([
+        fetchCandles(sym, tf, 250),
+        getMTF(sym),
+      ]);
+      const closes = candles.map(c=>c.c);
+      const cur    = closes.at(-1);
+      const rsi    = calcRSI(closes);
+      const macd   = calcMACD(closes);
+      const wy     = detectWyckoff(candles, closes, rsi);
+      const sc     = calcScore(wy, rsi, macd, mtfData, candles, closes);
+      const sr     = findSR(candles);
+
+      // Resumo IA rápido (sem Claude — só dados calculados)
+      const iaQuick = generateQuickSummary(sym, cur, wy, sc, rsi, macd, sr);
+
+      const result = { sym, cur, candles, closes, rsi, macd, wy, sc, sr, mtfData, iaQuick, tf };
+      scanResults.push(result);
+
+      // Renderiza o card imediatamente
+      renderOppCard(result);
+    } catch(e) {
+      console.warn(sym, e.message);
+    }
+
+    // Pequena pausa para não sobrecarregar a API
+    await new Promise(r=>setTimeout(r,300));
+  }
+
+  // Ordena por score
+  scanResults.sort((a,b)=>b.sc.score-a.sc.score);
+  renderAllCards();
+
+  btn.disabled=false; btn.textContent="🔍 Varrer Mercado com Wyckoff + IA";
+  document.getElementById("progressLabel").textContent=`✅ ${scanResults.length} pares analisados`;
+}
+
+function generateQuickSummary(sym, cur, wy, sc, rsi, macd, sr) {
+  const dir  = sc.dir;
+  const fase = wy.fase;
+  const bullTFs = sc.bullTFs;
+
+  let text = "";
+  if(fase==="ACUMULAÇÃO") text=`${sym} em fase de ACUMULAÇÃO Wyckoff. RSI sobrevendido (${rsi.toFixed(0)}) com volume declinante — possível Spring se romper suporte e recuperar.`;
+  else if(fase==="MARKUP") text=`${sym} em MARKUP — tendência de alta confirmada. Acima da EMA50 e EMA200 com ${bullTFs}/6 TFs alinhados. MACD ${macd.hist>0?"positivo":"negativo"}.`;
+  else if(fase==="DISTRIBUIÇÃO") text=`${sym} em DISTRIBUIÇÃO. RSI elevado (${rsi.toFixed(0)}) com possível Upthrust. Cuidado com posições longas.`;
+  else if(fase==="MARKDOWN") text=`${sym} em MARKDOWN — abaixo das EMAs principais. Evitar LONGs. Apenas SHORTs na força.`;
+  else text=`${sym} sem fase clara. ${bullTFs}/6 TFs acima da EMA200. Aguardar definição de direção.`;
+
+  if(wy.spring) text += " ⚡ SPRING detectado — possível fundo!";
+  if(wy.upthrust) text += " ⚠️ UPTHRUST — possível topo falso.";
+
+  return text;
+}
+
+// ── Render card ───────────────────────────────────────────────────
+function renderOppCard(r) {
+  const {sym,cur,wy,sc,rsi,macd,sr,mtfData,iaQuick,candles} = r;
+  const dirClass = sc.dir==="LONG"?"long-card":sc.dir==="SHORT"?"short-card":"neutral-card";
+  const scoreCol = sc.score>=8?"var(--green)":sc.score>=5?"var(--yellow)":"var(--red)";
+  const scorePct = (sc.score/sc.maxScore*100).toFixed(0);
+  const priceFmt = cur<1?cur.toFixed(6):cur<100?cur.toFixed(4):cur.toFixed(2);
+
+  const wyCls = `wyckoff-${wy.fase==="ACUMULAÇÃO"?"acc":wy.fase==="MARKUP"?"markup":wy.fase==="DISTRIBUIÇÃO"?"dis":wy.fase==="MARKDOWN"?"markdown":"none"}`;
+
+  // Mini candle (últimas 20 velas)
+  const last20 = candles.slice(-20);
+  const minP   = Math.min(...last20.map(c=>c.l));
+  const maxP   = Math.max(...last20.map(c=>c.h));
+  const candleHtml = last20.map(c=>{
+    const h = Math.round(((c.c>c.o?c.c:c.o)-minP)/(maxP-minP||1)*50)+5;
+    const cls= c.c>=c.o?"c-up":"c-dn";
+    return `<div class="c-bar ${cls}" style="height:${h}px"></div>`;
+  }).join("");
+
+  const card = document.createElement("div");
+  card.className = `opp-card ${dirClass}`;
+  card.innerHTML = `
+    <div class="opp-header">
+      <div>
+        <div class="opp-pair">${sym.replace("USDT","")}/USDT</div>
+        <div class="opp-price">$${priceFmt}</div>
+        <div class="opp-badges">
+          <span class="badge ${sc.dir==="LONG"?"badge-long":sc.dir==="SHORT"?"badge-short":"badge-neutral"}">${sc.dir}</span>
+          ${wy.spring?'<span class="badge badge-long">SPRING ⚡</span>':""}
+          ${wy.upthrust?'<span class="badge badge-short">UPTHRUST ⚠️</span>':""}
+        </div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-family:var(--mono);font-size:10px;color:var(--text2)">MTF EMA200</div>
+        <div style="font-family:var(--mono);font-size:14px;font-weight:700;color:${scoreCol}">${sc.bullTFs}/${MTF_SEQUENCE.length}</div>
+      </div>
+    </div>
+    <div class="opp-body">
+
+      <!-- Fase Wyckoff -->
+      <div class="wyckoff-badge ${wyCls}">⚡ WYCKOFF: ${wy.fase}</div>
+
+      <!-- Score -->
+      <div class="score-wrap">
+        <span class="score-num" style="color:${scoreCol}">${sc.score}</span>
+        <div class="score-bar"><div class="score-fill" style="width:${scorePct}%;background:${scoreCol}"></div></div>
+        <span class="score-lbl" style="color:${scoreCol}">${sc.score>=8?"FORTE":sc.score>=5?"MÉDIO":"FRACO"}</span>
+      </div>
+
+      <!-- MTF mini dots -->
+      <div class="mtf-mini">
+        ${mtfData.map(t=>`<div class="mtf-dot ${t.above?"mtf-bull":"mtf-bear"}" title="${t.label}: ${t.above?"ACIMA":"ABAIXO"} EMA200">${t.label}</div>`).join("")}
+      </div>
+
+      <!-- Indicadores -->
+      <div class="inds-row">
+        <span class="ind-chip" style="color:${rsi>70?"var(--red)":rsi<30?"var(--green)":"var(--text)"}">RSI ${rsi.toFixed(1)}</span>
+        <span class="ind-chip" style="color:${macd.hist>0?"var(--green)":"var(--red)"}">MACD ${macd.hist>0?"↑":"↓"}</span>
+        <span class="ind-chip" style="color:${cur>wy.ema200?"var(--green)":"var(--red)"}">EMA200 ${cur>wy.ema200?"✅":"⛔"}</span>
+        <span class="ind-chip" style="color:${cur>wy.ema50?"var(--green)":"var(--red)"}">EMA50 ${cur>wy.ema50?"✅":"⛔"}</span>
+      </div>
+
+      <!-- S/R -->
+      <div class="sr-levels">
+        ${sr.sup.slice(-2).map(s=>`<span class="sr-chip sr-sup">S $${s.toFixed(s<1?5:2)}</span>`).join("")}
+        ${sr.res.slice(-2).map(r=>`<span class="sr-chip sr-res">R $${r.toFixed(r<1?5:2)}</span>`).join("")}
+      </div>
+
+      <!-- Mini chart -->
+      <div class="candle-chart">${candleHtml}</div>
+
+      <!-- IA quick summary -->
+      <div class="opp-ia">${iaQuick}</div>
+    </div>`;
+
+  card.addEventListener("click", ()=>openModal(r));
+  document.getElementById("oppsGrid").appendChild(card);
+}
+
+function renderAllCards() {
+  document.getElementById("oppsGrid").innerHTML="";
+  scanResults.forEach(r=>renderOppCard(r));
+}
+
+// ── Modal análise completa com Claude ────────────────────────────
+async function openModal(r) {
+  currentModal = r;
+  const {sym,cur,wy,sc,rsi,macd,sr,mtfData,candles,closes,tf} = r;
+  document.getElementById("modalTitle").textContent = `${sym} — Análise Wyckoff Completa`;
+  document.getElementById("modal").classList.add("open");
+
+  // Indicadores
+  const priceFmt = cur<1?cur.toFixed(6):cur<100?cur.toFixed(4):cur.toFixed(2);
+  document.getElementById("modalIndicators").innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px">
+      ${[
+        {l:"PREÇO",v:"$"+priceFmt,c:"#fff"},
+        {l:"RSI",v:rsi.toFixed(1),c:rsi>70?"var(--red)":rsi<30?"var(--green)":"var(--text)"},
+        {l:"MACD HIST",v:(macd.hist>0?"+":"")+macd.hist.toFixed(6),c:macd.hist>0?"var(--green)":"var(--red)"},
+        {l:"FASE WYCKOFF",v:wy.fase,c:wy.fase==="ACUMULAÇÃO"||wy.fase==="MARKUP"?"var(--green)":"wy.fase==='DISTRIBUIÇÃO'||wy.fase==='MARKDOWN'?'var(--red)':'var(--text2)'"},
+        {l:"EMA200",v:"$"+wy.ema200.toFixed(cur<1?5:2),c:cur>wy.ema200?"var(--green)":"var(--red)"},
+        {l:"EMA50",v:"$"+wy.ema50.toFixed(cur<1?5:2),c:cur>wy.ema50?"var(--green)":"var(--red)"},
+        {l:"SPRING",v:wy.spring?"DETECTADO ⚡":"—",c:wy.spring?"var(--green)":"var(--text2)"},
+        {l:"UPTHRUST",v:wy.upthrust?"DETECTADO ⚠️":"—",c:wy.upthrust?"var(--red)":"var(--text2)"},
+      ].map(x=>`
+        <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px">
+          <div style="font-family:var(--mono);font-size:10px;color:var(--text2);margin-bottom:4px">${x.l}</div>
+          <div style="font-family:var(--mono);font-size:13px;font-weight:700;color:${x.c}">${x.v}</div>
+        </div>`).join("")}
+    </div>`;
+
+  // MTF completo
+  document.getElementById("modalMTF").innerHTML = `
+    <div style="font-family:var(--mono);font-size:10px;color:var(--text2);letter-spacing:1px;margin-bottom:8px">MULTI-TIMEFRAME EMA200</div>
+    <table style="width:100%;border-collapse:collapse">
+      <thead><tr>
+        <th style="text-align:left;padding:6px;font-size:10px;color:var(--text2);font-family:var(--mono)">TF</th>
+        <th style="text-align:left;padding:6px;font-size:10px;color:var(--text2);font-family:var(--mono)">EMA200</th>
+        <th style="text-align:left;padding:6px;font-size:10px;color:var(--text2);font-family:var(--mono)">DISTÂNCIA</th>
+        <th style="text-align:left;padding:6px;font-size:10px;color:var(--text2);font-family:var(--mono)">RSI</th>
+        <th style="text-align:left;padding:6px;font-size:10px;color:var(--text2);font-family:var(--mono)">STATUS</th>
+      </tr></thead>
+      <tbody>
+        ${mtfData.map(t=>{
+          const diff=((cur-t.ema200)/t.ema200*100).toFixed(2);
+          const rsiCol=t.rsi>70?"var(--red)":t.rsi<30?"var(--green)":"var(--text)";
+          return `<tr style="border-bottom:1px solid rgba(255,255,255,.04)">
+            <td style="padding:6px;font-family:var(--mono);font-weight:700">${t.label}</td>
+            <td style="padding:6px;font-family:var(--mono);font-size:11px">$${t.ema200.toFixed(cur<1?5:2)}</td>
+            <td style="padding:6px;font-family:var(--mono);font-size:11px;color:${t.above?"var(--green)":"var(--red)"}">${t.above?"+":""}${diff}%</td>
+            <td style="padding:6px;font-family:var(--mono);font-size:11px;color:${rsiCol}">${t.rsi.toFixed(1)}</td>
+            <td style="padding:6px"><span class="badge ${t.above?"badge-long":"badge-short"}">${t.above?"BULL ▲":"BEAR ▼"}</span></td>
+          </tr>`;
+        }).join("")}
+      </tbody>
+    </table>`;
+
+  // S/R
+  document.getElementById("modalSR").innerHTML = `
+    <div style="font-family:var(--mono);font-size:10px;color:var(--text2);letter-spacing:1px;margin-bottom:8px">SUPORTE & RESISTÊNCIA</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      ${sr.sup.map(s=>`<span class="sr-chip sr-sup" style="font-size:12px;padding:4px 12px">Sup $${s.toFixed(cur<1?5:2)}</span>`).join("")}
+      ${sr.res.map(r=>`<span class="sr-chip sr-res" style="font-size:12px;padding:4px 12px">Res $${r.toFixed(cur<1?5:2)}</span>`).join("")}
+    </div>`;
+
+  // Mini chart maior
+  const last40=candles.slice(-40);
+  const minP=Math.min(...last40.map(c=>c.l)), maxP=Math.max(...last40.map(c=>c.h));
+  document.getElementById("modalChart").innerHTML = `
+    <div style="font-family:var(--mono);font-size:10px;color:var(--text2);letter-spacing:1px;margin-bottom:6px">ÚLTIMAS 40 VELAS (${TF_LABELS[tf]||tf})</div>
+    <div style="height:80px;display:flex;align-items:flex-end;gap:2px;background:var(--bg3);border-radius:8px;padding:6px;overflow:hidden">
+      ${last40.map(c=>{
+        const h=Math.round(((c.c>c.o?c.c:c.o)-minP)/(maxP-minP||1)*60)+4;
+        return `<div style="flex:1;min-width:5px;height:${h}px;border-radius:1px;background:${c.c>=c.o?"var(--green)":"var(--red)"};opacity:.8"></div>`;
+      }).join("")}
+    </div>`;
+
+  // Análise Claude
+  document.getElementById("modalIA").innerHTML = '<div style="display:flex;align-items:center;gap:8px;color:var(--purple)"><div class="dots"><span></span><span></span><span></span></div> Analisando com IA Wyckoff...</div>';
+
+  // Monta contexto rico
+  const ctx = `
+ANÁLISE WYCKOFF COMPLETA — ${sym}
+Timeframe: ${TF_LABELS[tf]||tf} | Data: ${new Date().toLocaleString("pt-BR")}
+
+═══ PREÇO E EMAs ═══
+Preço atual: $${priceFmt}
+EMA21:  $${calcEMA(closes,21).at(-1).toFixed(cur<1?5:2)} (${cur>calcEMA(closes,21).at(-1)?"ACIMA":"ABAIXO"})
+EMA50:  $${wy.ema50.toFixed(cur<1?5:2)} (${cur>wy.ema50?"ACIMA":"ABAIXO"})
+EMA200: $${wy.ema200.toFixed(cur<1?5:2)} (${cur>wy.ema200?"ACIMA ✅":"ABAIXO ⛔"})
+
+═══ INDICADORES ═══
+RSI(14): ${rsi.toFixed(2)} — ${rsi>70?"SOBRECOMPRADO":rsi<30?"SOBREVENDIDO":"NEUTRO"}
+MACD Histograma: ${macd.hist>0?"+":""}${macd.hist.toFixed(8)} ${macd.hist>macd.histPrev?"↑ crescendo":"↓ caindo"}
+MACD vs Signal: ${macd.macd>macd.signal?"ACIMA (bullish)":"ABAIXO (bearish)"}
+
+═══ WYCKOFF ═══
+Fase detectada: ${wy.fase}
+Posição no range (0=fundo, 1=topo): ${(wy.posInRange*100).toFixed(0)}%
+Spring detectado: ${wy.spring?"SIM ⚡":"NÃO"}
+Upthrust detectado: ${wy.upthrust?"SIM ⚠️":"NÃO"}
+
+═══ MULTI-TIMEFRAME EMA200 ═══
+Score: ${sc.bullTFs}/${MTF_SEQUENCE.length} timeframes acima da EMA200
+${mtfData.map(t=>`${t.label}: ${t.above?"ACIMA":"ABAIXO"} (RSI: ${t.rsi.toFixed(1)})`).join("\n")}
+
+═══ SUPORTE E RESISTÊNCIA ═══
+Suportes: ${sr.sup.map(s=>"$"+s.toFixed(cur<1?5:2)).join(" | ")||"—"}
+Resistências: ${sr.res.map(r=>"$"+r.toFixed(cur<1?5:2)).join(" | ")||"—"}
+
+═══ SCORE CONFLUÊNCIA ═══
+Score total: ${sc.score}/${sc.maxScore}
+Direção sugerida: ${sc.dir}
+Sinais: ${sc.signals.map(s=>s.t).join(" | ")}
+`;
+
+  try {
+    const res = await fetch("/api/claude", {
+      method:"POST",
+      headers:{"Content-Type":"application/json","x-admin-key":ADMIN_KEY},
+      body: JSON.stringify({
+        max_tokens: 1800,
+        system: `Você é um analista técnico sênior especializado em Método Wyckoff para futuros cripto na Bybit.
+
+Analise os dados fornecidos com profundidade e retorne no seguinte formato exato:
+
+📊 LEITURA WYCKOFF
+[Descreva a fase exata (Acumulação/Markup/Distribuição/Markdown/Indefinida), o que está acontecendo na estrutura de preço, se há Spring ou Upthrust, e o que o volume indica]
+
+🎯 CONTEXTO TÉCNICO
+[RSI, MACD, EMAs — o que cada um confirma ou contradiz. Confluência ou divergência entre indicadores]
+
+📍 NÍVEIS OPERACIONAIS
+Entrada ideal: $X
+Stop Loss: $X (X% — 1 ATR abaixo/acima do nível chave)
+TP1 (+3-5%): $X
+TP2 (+15-25%): $X
+TP3 (+40%+): $X
+R/R estimado: X:1
+
+⚡ CONFLUÊNCIAS MTF
+[Quais timeframes confirmam? Há divergência entre TFs curtos e longos?]
+
+⚠️ RISCOS E INVALIDAÇÕES
+[O que invalidaria esse setup? Onde o preço não pode ir?]
+
+✅ VEREDICTO FINAL
+Operação: LONG / SHORT / AGUARDAR
+Confiança: X/10
+[Uma linha explicando a decisão]`,
+        messages:[{role:"user", content:ctx}]
+      })
+    });
+    const d = await res.json();
+    const text = (d.content||[]).map(b=>b.text||"").join("");
+    document.getElementById("modalIA").innerHTML = `<div class="ia-text">${text.replace(/\n/g,"<br/>")}</div>`;
+
+    // Botão publicar sinal
+    document.getElementById("modalActions").innerHTML = `
+      <button class="btn btn-primary" onclick="prepareSignal('${sym}','${sc.dir}','${priceFmt}')">
+        📡 Publicar como Sinal no ACS SYSTEM
+      </button>
+      <button class="btn btn-ghost" onclick="closeModal()">Fechar</button>`;
+
+  } catch(e) {
+    document.getElementById("modalIA").innerHTML = `<div style="color:var(--red)">Erro IA: ${e.message}</div>`;
+  }
+}
+
+function closeModal() { document.getElementById("modal").classList.remove("open"); }
+document.getElementById("modal").addEventListener("click", e=>{ if(e.target===document.getElementById("modal")) closeModal(); });
+
+// ── Preparar sinal para publicar ─────────────────────────────────
+function prepareSignal(sym, dir, entry) {
+  closeModal();
+  alert(`Para publicar:\n\n1. Abra o painel admin do ACS SYSTEM\n2. Clique em "+ Novo Sinal"\n3. Par: ${sym}\n4. Tipo: ${dir}\n5. Entrada: $${entry}\n\nOu use o botão "🤖 Analisar com IA" no admin que já pré-preenche tudo automaticamente.`);
+}
+
+// ── Analisar posição aberta ───────────────────────────────────────
+async function analyzePosition(pos) {
+  if(typeof pos==="string") pos=JSON.parse(pos.replace(/&apos;/g,"'"));
+  const sym  = pos.symbol;
+  const side = pos.side==="Buy"?"LONG":"SHORT";
+  const entry= parseFloat(pos.avgPrice);
+
+  try {
+    const candles = await fetchCandles(sym, "60", 250);
+    const closes  = candles.map(c=>c.c);
+    const rsi     = calcRSI(closes);
+    const macd    = calcMACD(closes);
+    const wy      = detectWyckoff(candles, closes, rsi);
+    const mtfData = await getMTF(sym);
+    const sc      = calcScore(wy, rsi, macd, mtfData, candles, closes);
+    const sr      = findSR(candles);
+
+    openModal({ sym, cur:closes.at(-1), candles, closes, rsi, macd, wy, sc, sr, mtfData, iaQuick:"", tf:"60" });
+  } catch(e) {
+    alert("Erro ao analisar: "+e.message);
+  }
+}
+</script>
+</body>
+</html>
+
+/* ══════════════════════════════════════════════
+   server.js — ALFA CRIPTO SINAIS v2
+   + Preços reais via CoinGecko
+   + Signals persistidos no banco (CRUD admin)
+   + Targets ativam automaticamente com preço real
+   + Auth por email/senha · Webhook Eduzz
+   ══════════════════════════════════════════════ */
+
+require("dotenv").config();
+const express = require("express");
+const path    = require("path");
+const db      = require("./db");
+const auth    = require("./auth");
+const eduzz   = require("./eduzz");
+
+const app  = express();
+const PORT = process.env.PORT || 3000;
+const API_KEY   = process.env.ANTHROPIC_API_KEY;
+const ADMIN_KEY = process.env.ADMIN_KEY;
+
+// ══════════════════════════════════════════════
+// ONESIGNAL — Push Notifications
+// ══════════════════════════════════════════════
+const ONESIGNAL_APP_ID  = process.env.ONESIGNAL_APP_ID  || "";
+const ONESIGNAL_API_KEY = process.env.ONESIGNAL_API_KEY || "";
+
+async function sendPushNotification({ title, message, url = "/" }) {
+  if (!ONESIGNAL_APP_ID || !ONESIGNAL_API_KEY) {
+    console.warn("⚠️  OneSignal não configurado — notificação ignorada");
+    return;
+  }
+  try {
+    const res = await fetch("https://onesignal.com/api/v1/notifications", {
+      method: "POST",
+      headers: {
+        "Content-Type":  "application/json",
+        "Authorization": `Key ${ONESIGNAL_API_KEY}`,
+      },
+      body: JSON.stringify({
+        app_id:             ONESIGNAL_APP_ID,
+        included_segments:  ["All"],          // envia para todos os assinantes
+        headings:           { pt: title,   en: title   },
+        contents:           { pt: message, en: message },
+        url:                process.env.APP_URL ? process.env.APP_URL + url : url,
+        chrome_web_icon:    process.env.APP_URL ? process.env.APP_URL + "/icon-192.png" : "",
+        priority:           10,               // alta prioridade
+      }),
+    });
+    const data = await res.json();
+    if (data.errors) console.error("OneSignal erro:", data.errors);
+    else console.log(`📲 Push enviado: "${title}" → ${data.recipients || 0} dispositivos`);
+    return data;
+  } catch (err) {
+    console.error("OneSignal fetch erro:", err.message);
+  }
+}
+
+
+if (!API_KEY) {
+  console.warn("\n⚠️  ANTHROPIC_API_KEY não encontrada — chat IA desativado\n");
+}
+
+// ── Admin middleware ───────────────────────────────────────────────────────────
+function requireAdmin(req, res, next) {
+  if (!ADMIN_KEY) return res.status(500).json({ error:"admin_not_configured" });
+  const key = req.headers["x-admin-key"] || req.query.key;
+  if (key !== ADMIN_KEY) return res.status(401).json({ error:"unauthorized" });
+  next();
+}
+
+// ── Demo user em modo local ────────────────────────────────────────────────────
+const DEMO_EMAIL    = "teste@local.com";
+const DEMO_PASSWORD = "teste123";
+if (process.env.NODE_ENV !== "production" && db.users.all().length === 0) {
+  const hash = auth.hashPassword(DEMO_PASSWORD);
+  db.users.create({ email: DEMO_EMAIL, password_hash: hash, name: "Conta de Teste", plan: "Demo Local" });
+  console.log(`\n👤 Conta de teste criada automaticamente:`);
+  console.log(`   Email: ${DEMO_EMAIL}`);
+  console.log(`   Senha: ${DEMO_PASSWORD}\n`);
+}
+
+function sanitizeUser(user) {
+  if (!user) return user;
+  const { password_hash, ...safe } = user;
+  return safe;
+}
+
+// ── Body parsing ───────────────────────────────────────────────────────────────
+app.use(express.json({
+  verify: (req, res, buf) => { req.rawBody = buf.toString("utf8"); },
+}));
+
+// ══════════════════════════════════════════════
+// PREÇOS EM TEMPO REAL — CoinGecko (grátis, sem API key)
+// Cache de 30s para não bater limite de rate
+// ══════════════════════════════════════════════
+let priceCache = { data: null, fetchedAt: 0 };
+
+const COINGECKO_IDS = [
+  "bitcoin", "ethereum", "binancecoin", "solana",
+  "ripple", "cardano", "avalanche-2", "chainlink",
+  "dogecoin", "arbitrum", "optimism", "injective-protocol",
+  "toncoin", "sui", "pepe", "worldcoin-wld", "near",
+  "fantom", "aptos"
+].join(",");
+
+async function fetchPrices() {
+  const now = Date.now();
+  // Cache de 30 segundos
+  if (priceCache.data && now - priceCache.fetchedAt < 30_000) {
+    return priceCache.data;
+  }
+
+  try {
+    const url = `https://api.coingecko.com/api/v3/simple/price?ids=${COINGECKO_IDS}&vs_currencies=usd&include_24hr_change=true`;
+    const resp = await fetch(url, {
+      headers: { "Accept": "application/json", "User-Agent": "alfa-cripto-sinais/2.0" },
+      signal: AbortSignal.timeout(8000),
+    });
+
+    if (!resp.ok) throw new Error(`CoinGecko HTTP ${resp.status}`);
+    const raw = await resp.json();
+
+    // Normaliza para { "BTC/USDT": { price, change24h }, ... }
+    const MAP = {
+      "bitcoin":              "BTC/USDT",
+      "ethereum":             "ETH/USDT",
+      "binancecoin":          "BNB/USDT",
+      "solana":               "SOL/USDT",
+      "ripple":               "XRP/USDT",
+      "cardano":              "ADA/USDT",
+      "avalanche-2":          "AVAX/USDT",
+      "chainlink":            "LINK/USDT",
+      "dogecoin":             "DOGE/USDT",
+      "arbitrum":             "ARB/USDT",
+      "optimism":             "OP/USDT",
+      "injective-protocol":   "INJ/USDT",
+      "toncoin":              "TON/USDT",
+      "sui":                  "SUI/USDT",
+      "pepe":                 "PEPE/USDT",
+      "worldcoin-wld":        "WLD/USDT",
+      "near":                 "NEAR/USDT",
+      "fantom":               "FTM/USDT",
+      "aptos":                "APT/USDT",
+    };
+
+    const prices = {};
+    for (const [id, pair] of Object.entries(MAP)) {
+      if (raw[id]) {
+        prices[pair] = {
+          price:     raw[id].usd,
+          change24h: raw[id].usd_24h_change?.toFixed(2) ?? "0",
+        };
+      }
+    }
+
+    priceCache = { data: prices, fetchedAt: Date.now() };
+    return prices;
+  } catch (err) {
+    console.error("⚠️  CoinGecko erro:", err.message);
+    // Retorna cache antigo se existir, ou null
+    return priceCache.data || null;
+  }
+}
+
+// ── Verifica targets automaticamente a cada 30s ────────────────────────────────
+async function checkSignalTargets() {
+  const active = db.signals.active();
+  if (active.length === 0) return;
+  const prices = await fetchPrices();
+  if (!prices) return;
+
+  for (const sig of active) {
+    const priceObj = prices[sig.pair];
+    if (!priceObj) continue;
+    const hitBefore = sig.hit || 0;
+    const updated   = db.signals.checkTargets(sig.id, priceObj.price);
+    if (!updated) continue;
+
+    // Novo alvo atingido
+    if (updated.hit > hitBefore) {
+      const alvoVal = (updated.targets || [])[updated.hit - 1] || "?";
+      sendPushNotification({
+        title:   `🎯 Alvo ${updated.hit} atingido — ${sig.pair}`,
+        message: `Meta de ${alvoVal} alcançada! ${updated.hit}/${(updated.targets||[]).length} alvos concluídos.`,
+        url:     "/",
+      });
+    }
+    // Sinal fechou com lucro automático
+    if (updated.status === "profit" && sig.status === "active") {
+      sendPushNotification({
+        title:   `✅ Lucro confirmado — ${sig.pair}`,
+        message: `Resultado: ${updated.profit_pct || "—"} em ${updated.time_to_hit || "—"}. Parabéns! 🚀`,
+        url:     "/",
+      });
+    }
+  }
+}
+
+setInterval(checkSignalTargets, 30_000);
+
+// ══════════════════════════════════════════════
+// API PÚBLICA: Preços em tempo real
+// ══════════════════════════════════════════════
+app.get("/api/prices", auth.requireAuth, async (req, res) => {
+  const prices = await fetchPrices();
+  if (!prices) return res.status(503).json({ error: "prices_unavailable", message: "CoinGecko indisponível. Tente em instantes." });
+  res.json({ prices, fetchedAt: new Date(priceCache.fetchedAt).toISOString() });
+});
+
+// ══════════════════════════════════════════════
+// API: Sinais (leitura — para usuários logados)
+// ══════════════════════════════════════════════
+app.get("/api/signals", auth.requireAuth, (req, res) => {
+  const all = db.signals.all();
+  res.json({ signals: all });
+});
+
+// ══════════════════════════════════════════════
+// WEBHOOK Eduzz
+// ══════════════════════════════════════════════
+app.post("/webhook/eduzz", eduzz.webhookHandler);
+
+// ══════════════════════════════════════════════
+// AUTH
+// ══════════════════════════════════════════════
+app.post("/api/auth/login", (req, res) => {
+  const { email, password } = req.body || {};
+  if (!email || !password)
+    return res.status(400).json({ error:"missing_fields", message:"Informe email e senha." });
+
+  const user = db.users.findByEmail(email.toLowerCase().trim());
+  if (!user || !auth.verifyPassword(password, user.password_hash))
+    return res.status(401).json({ error:"invalid_credentials", message:"Email ou senha incorretos." });
+
+  if (user.status !== "active")
+    return res.status(403).json({ error:"subscription_inactive", message:"Assinatura não está ativa." });
+
+  if (user.expires_at && new Date(user.expires_at) < new Date()) {
+    db.users.update(user.id, { status:"inactive" });
+    return res.status(403).json({ error:"subscription_expired", message:"Sua assinatura expirou." });
+  }
+
+  const session = auth.createSession(user.id);
+  auth.setSessionCookie(res, session.id);
+  res.json({ ok:true, user:{ email:user.email, name:user.name, plan:user.plan } });
+});
+
+app.post("/api/auth/logout", (req, res) => {
+  const cookies = auth.parseCookies(req);
+  if (cookies[auth.COOKIE_NAME]) auth.destroySession(cookies[auth.COOKIE_NAME]);
+  auth.clearSessionCookie(res);
+  res.json({ ok:true });
+});
+
+app.get("/api/auth/me", (req, res) => {
+  const cookies = auth.parseCookies(req);
+  const user = auth.getSession(cookies[auth.COOKIE_NAME]);
+  if (!user || user.status !== "active")
+    return res.status(401).json({ error:"not_authenticated" });
+  res.json({ email:user.email, name:user.name, plan:user.plan, expires_at:user.expires_at });
+});
+
+app.post("/api/auth/change-password", auth.requireAuth, (req, res) => {
+  const { newPassword } = req.body || {};
+  if (!newPassword || newPassword.length < 6)
+    return res.status(400).json({ error:"weak_password", message:"Senha precisa de ao menos 6 caracteres." });
+  db.users.update(req.user.id, { password_hash: auth.hashPassword(newPassword) });
+  res.json({ ok:true });
+});
+
+// ══════════════════════════════════════════════
+// ADMIN — Usuários
+// ══════════════════════════════════════════════
+app.get("/api/admin/users", requireAdmin, (req, res) => {
+  res.json({ users: db.users.all().map(sanitizeUser) });
+});
+
+app.post("/api/admin/users", requireAdmin, (req, res) => {
+  const { email, password, name, plan } = req.body || {};
+  if (!email || !password)
+    return res.status(400).json({ error:"missing_fields", message:"Email e senha são obrigatórios." });
+  const norm = email.toLowerCase().trim();
+  if (db.users.findByEmail(norm))
+    return res.status(409).json({ error:"already_exists", message:"Já existe assinante com este email." });
+  const hash = auth.hashPassword(password);
+  const user = db.users.create({ email:norm, password_hash:hash, name, plan });
+  res.json({ ok:true, user:sanitizeUser(user) });
+});
+
+app.patch("/api/admin/users/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const { status, plan, name, expires_at, newPassword } = req.body || {};
+  const patch = {};
+  if (status      !== undefined) patch.status      = status;
+  if (plan        !== undefined) patch.plan        = plan;
+  if (name        !== undefined) patch.name        = name;
+  if (expires_at  !== undefined) patch.expires_at  = expires_at;
+  if (newPassword)               patch.password_hash = auth.hashPassword(newPassword);
+  const user = db.users.update(id, patch);
+  if (!user) return res.status(404).json({ error:"not_found" });
+  res.json({ ok:true, user:sanitizeUser(user) });
+});
+
+app.get("/api/admin/webhook-log", requireAdmin, (req, res) => {
+  res.json({ logs: db.webhookLog.recent(50) });
+});
+
+// ══════════════════════════════════════════════
+// ADMIN — Sinais (CRUD completo)
+// ══════════════════════════════════════════════
+
+// Listar todos
+app.get("/api/admin/signals", requireAdmin, (req, res) => {
+  res.json({ signals: db.signals.all() });
+});
+
+// Criar sinal
+app.post("/api/admin/signals", requireAdmin, (req, res) => {
+  const { pair, type, entry, leverage, stoploss, targets, reason, timeframe, setup, confidence, source } = req.body || {};
+  if (!pair || !entry)
+    return res.status(400).json({ error:"missing_fields", message:"Par e entrada são obrigatórios." });
+
+  const sig = db.signals.create({ pair, type, entry, leverage, stoploss, targets, reason, timeframe, setup, confidence, source: source || "admin" });
+
+  // 📲 Push notification para todos os membros
+  const tipoBr   = (type === "SHORT") ? "🔴 VENDA" : "🟢 COMPRA";
+  const alvosStr = (targets || []).slice(0, 3).join(" · ");
+  sendPushNotification({
+    title:   `📡 Novo Sinal — ${pair}`,
+    message: `${tipoBr} · Entrada: ${entry} · Alav: ${leverage} · Alvos: ${alvosStr}`,
+    url:     "/",
+  });
+
+  res.json({ ok:true, signal:sig });
+});
+
+// Editar sinal
+app.patch("/api/admin/signals/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const allowed = ["pair","type","entry","leverage","stoploss","targets","reason","timeframe","setup","confidence","status","hit","profit_pct","result_pct","time_to_hit","closed_at"];
+  const patch = {};
+  for (const k of allowed) {
+    if (req.body[k] !== undefined) patch[k] = req.body[k];
+  }
+  // Grava closed_at automaticamente se status muda para fechado
+  if (patch.status && ["profit","loss","closed"].includes(patch.status) && !patch.closed_at) {
+    patch.closed_at = new Date().toISOString();
+  }
+  const sig = db.signals.update(id, patch);
+  if (!sig) return res.status(404).json({ error:"not_found" });
+  res.json({ ok:true, signal:sig });
+});
+
+// Deletar sinal
+app.delete("/api/admin/signals/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const ok = db.signals.delete(id);
+  if (!ok) return res.status(404).json({ error:"not_found" });
+  res.json({ ok:true });
+});
+
+// Forçar checagem de targets agora
+app.post("/api/admin/signals/check-targets", requireAdmin, async (req, res) => {
+  await checkSignalTargets();
+  res.json({ ok:true, checked: db.signals.active().length });
+});
+
+
+// ══════════════════════════════════════════════
+// RELATÓRIOS (admin)
+// ══════════════════════════════════════════════
+
+// Meses disponíveis
+app.get("/api/admin/reports/months", requireAdmin, (req, res) => {
+  const months = db.reports ? db.reports.availableMonths() : [];
+  res.json({ months });
+});
+
+// Relatório por mês: /api/admin/reports/2026-07
+app.get("/api/admin/reports/:period", requireAdmin, (req, res) => {
+  const period = req.params.period; // "2026-07" ou "2026-07-01/2026-07-31"
+
+  let sigs;
+  if (period.includes("/")) {
+    const [from, to] = period.split("/");
+    sigs = db.reports ? db.reports.byRange(from, to) : [];
+  } else {
+    const [year, month] = period.split("-").map(Number);
+    sigs = db.reports ? db.reports.byMonth(year, month) : [];
+  }
+
+  const metrics = db.reports ? db.reports.metrics(sigs) : {};
+  const sorted  = [...sigs].sort((a,b) => new Date(b.created_at)-new Date(a.created_at));
+
+  res.json({ period, metrics, signals: sorted });
+});
+
+// Relatório geral (todos os tempos)
+app.get("/api/admin/reports", requireAdmin, (req, res) => {
+  const all     = db.signals.all();
+  const metrics = db.reports ? db.reports.metrics(all) : {};
+  const months  = db.reports ? db.reports.availableMonths() : [];
+  res.json({ metrics, months, total: all.length });
+});
+
+
+// ══════════════════════════════════════════════
+// BYBIT API PROXY (privado — só admin)
+// ══════════════════════════════════════════════
+const crypto_mod = require("crypto");
+
+function bybitSign(params, secret, timestamp, recvWindow = "5000") {
+  const paramStr = timestamp + (process.env.BYBIT_API_KEY||"") + recvWindow +
+    Object.keys(params).sort().map(k => k+"="+params[k]).join("&");
+  return crypto_mod.createHmac("sha256", secret).update(paramStr).digest("hex");
+}
+
+app.get("/api/bybit/proxy", requireAdmin, async (req, res) => {
+  const BYBIT_KEY    = process.env.BYBIT_API_KEY;
+  const BYBIT_SECRET = process.env.BYBIT_API_SECRET;
+
+  if (!BYBIT_KEY || !BYBIT_SECRET) {
+    return res.status(503).json({ error: "Credenciais Bybit não configuradas no Railway" });
+  }
+
+  const { endpoint, ...params } = req.query;
+  if (!endpoint) return res.status(400).json({ error: "endpoint obrigatório" });
+
+  const timestamp  = String(Date.now());
+  const recvWindow = "5000";
+  const signature  = bybitSign(params, BYBIT_SECRET, timestamp, recvWindow);
+
+  // Monta query string
+  const qs = Object.keys(params).length
+    ? "?" + Object.keys(params).map(k => k+"="+encodeURIComponent(params[k])).join("&")
+    : "";
+
+  try {
+    const r = await fetch("https://api.bybit.com" + endpoint + qs, {
+      headers: {
+        "X-BAPI-API-KEY":     BYBIT_KEY,
+        "X-BAPI-SIGN":        signature,
+        "X-BAPI-TIMESTAMP":   timestamp,
+        "X-BAPI-RECV-WINDOW": recvWindow,
+        "Content-Type":       "application/json",
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+    const data = await r.json();
+    res.json(data);
+  } catch(err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Serve a página de análise Bybit
+app.get("/bybit-analise.html", requireAdmin, (req, res) => serveFile("bybit-analise.html", res));
+
+// ══════════════════════════════════════════════
+// PROXY CLAUDE (protegido por sessão)
+// ══════════════════════════════════════════════
+app.post("/api/claude", auth.requireAuth, async (req, res) => {
+  try {
+    const { system, messages, max_tokens } = req.body;
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": API_KEY,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({ model:"claude-sonnet-4-5", max_tokens:max_tokens||2000, system, messages }),
+    });
+    const data = await response.json();
+    if (!response.ok) { console.error("Anthropic erro:", data); return res.status(response.status).json(data); }
+    res.json(data);
+  } catch (err) {
+    console.error("Proxy Claude erro:", err);
+    res.status(500).json({ error:"internal_error", details:err.message });
+  }
+});
+
+// ══════════════════════════════════════════════
+// PÁGINAS — detecta paths automaticamente
+// ══════════════════════════════════════════════
+const fs2 = require("fs");
+
+function findFile(filename) {
+  const candidates = [
+    path.join(__dirname, filename),
+    path.join(__dirname, "public", filename),
+    path.join(__dirname, "admin-pages", filename),
+    path.join(process.cwd(), filename),
+    path.join(process.cwd(), "public", filename),
+    path.join("/app", filename),
+    path.join("/app/public", filename),
+  ];
+  for (const p of candidates) {
+    try { if (fs2.existsSync(p)) return p; } catch {}
+  }
+  return null;
+}
+
+// Log de diagnóstico no boot
+["index.html","login.html","app.js","style.css","login.css","login.js","admin.html"].forEach(f => {
+  const found = findFile(f);
+  console.log(`   ${f}: ${found ? "✅ "+found : "❌ NÃO ENCONTRADO"}`);
+});
+
+function serveFile(filename, res) {
+  const filePath = findFile(filename);
+  if (!filePath) {
+    return res.status(404).send(`Arquivo ${filename} não encontrado. Verifique se está na raiz do repositório GitHub.`);
+  }
+  res.sendFile(filePath);
+}
+
+// PWA — arquivos públicos (sem autenticação)
+app.get("/manifest.json",        (req, res) => { res.setHeader("Content-Type","application/manifest+json"); serveFile("manifest.json", res); });
+app.get("/icon-192.png",         (req, res) => serveFile("icon-192.png", res));
+app.get("/icon-512.png",         (req, res) => serveFile("icon-512.png", res));
+app.get("/OneSignalSDKWorker.js", (req, res) => {
+  // Service Worker deve ser público e servido como JS
+  const filePath = findFile("OneSignalSDKWorker.js");
+  if (!filePath) return res.status(404).send("OneSignalSDKWorker.js não encontrado");
+  res.setHeader("Content-Type", "application/javascript");
+  res.setHeader("Service-Worker-Allowed", "/");
+  res.sendFile(filePath);
+});
+app.get("/admin.html",   (req, res) => serveFile("admin.html", res));
+app.get(["/","/index.html"], auth.requirePageAuth, (req, res) => serveFile("index.html", res));
+app.get("/app.js",       auth.requirePageAuth, (req, res) => serveFile("app.js", res));
+app.get("/style.css",    auth.requirePageAuth, (req, res) => serveFile("style.css", res));
+app.get("/login.css",    (req, res) => serveFile("login.css", res));
+app.get("/login.js",     (req, res) => serveFile("login.js", res));
+
+// Serve estáticos da raiz + subpastas
+app.use(express.static(__dirname));
+app.use(express.static(path.join(__dirname, "public")));
+
+// ══════════════════════════════════════════════
+app.listen(PORT, () => {
+  console.log(`\n🚀 ALFA CRIPTO SINAIS v2 rodando na porta ${PORT}`);
+  console.log(`   Preços reais:    /api/prices  (CoinGecko 30s cache)`);
+  console.log(`   Sinais admin:    /admin.html`);
+  console.log(`   Login:           /login.html\n`);
+});
+
+setInterval(() => db.sessions.cleanExpired(), 60 * 60 * 1000).unref();
