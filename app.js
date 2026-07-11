@@ -379,8 +379,14 @@ function renderAlerts() {
       : "";
 
     if (s._type === "profit") {
+      // Fallback: se não tem profit_pct, usa o último alvo atingido
+      const _lastTarget = (s.hit > 0 && s.targets && s.targets[s.hit-1])
+        ? "+"+s.targets[s.hit-1]
+        : null;
       const _pct = s.profit_pct || s.profitPct
-        || (s.result_pct ? "+"+parseFloat(s.result_pct).toFixed(1)+"%" : "+?");
+        || (s.result_pct ? "+"+parseFloat(s.result_pct).toFixed(1)+"%" : null)
+        || _lastTarget
+        || (s.hit > 0 ? "+"+s.hit+" alvos" : "+?");
       const _dur = s.time_to_hit || s.timeToHit || "";
       const _closedAt = s.closed_at
         ? new Date(s.closed_at).toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})
