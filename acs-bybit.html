@@ -790,16 +790,19 @@ async function runAnalysis() {
   document.getElementById('iaText').innerHTML = '<div class="loading"><div class="dots"><span></span><span></span><span></span></div> Buscando dados da Bybit...</div>';
 
   try {
-    // 1. Busca candles principal + MTF em paralelo
-    const [candles, ...mtfResults] = await Promise.all([
-      fetchCandles(sym, tf, 250),
-      ...MTF_LIST.map(({tf:t}) => fetchCandles(sym, t, 210).then(c=>{
-        const cl = c.map(x=>x.c);
-        const e  = calcEMA(cl,200).at(-1);
+    // 1. Busca candles principal
+    const candles = await fetchCandles(sym, tf, 250);
+
+    // 2. Busca MTF em paralelo
+    const mtfPromises = MTF_LIST.map(({tf:t}) =>
+      fetchCandles(sym, t, 210).then(c => {
+        const cl = c.map(x => x.c);
+        const e  = calcEMA(cl, 200).at(-1);
         const r  = calcRSI(cl);
         return {tf:t, lbl:MTF_LIST.find(x=>x.tf===t)?.lbl||t, ema200:e, rsi:r, above:cl.at(-1)>e, cur:cl.at(-1)};
-      }).catch(()=>null),
-    ]);
+      }).catch(() => null)
+    );
+    const mtfResults = await Promise.all(mtfPromises);
 
     const closes = candles.map(c=>c.c);
     const cur    = closes.at(-1);
