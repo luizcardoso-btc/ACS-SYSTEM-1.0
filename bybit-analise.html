@@ -323,26 +323,37 @@ let currentModal = null;
 
 // ── Gate ─────────────────────────────────────────────────────────
 async function unlock() {
-  const key = document.getElementById("keyInput").value.trim();
-  if (!key) { document.getElementById("gateErr").textContent = "Digite a Admin Key."; return; }
-  
+  const key   = document.getElementById("keyInput").value.trim();
   const errEl = document.getElementById("gateErr");
+  if (!key) { errEl.textContent = "Digite a Admin Key."; return; }
   errEl.textContent = "Verificando...";
-  
-  try {
-    const res = await fetch("/api/admin/users", { headers:{"x-admin-key": key} });
-    if (!res.ok) {
-      errEl.textContent = "Chave inválida. Verifique e tente novamente.";
-      return;
-    }
-    ADMIN_KEY = key;
-    // Salva com as duas chaves para compatibilidade
-    localStorage.setItem("bybit_key", key);
-    localStorage.setItem("acs_admin_key", key);
-    showApp();
-  } catch(e) {
-    errEl.textContent = "Erro de conexão: " + e.message;
+
+  // Tenta múltiplas rotas para validar a chave
+  const attempts = [
+    () => fetch("/api/admin/signals",          { headers:{"x-admin-key": key} }),
+    () => fetch("/api/admin/users",            { headers:{"x-admin-key": key} }),
+    () => fetch("/api/admin/ping?key="         + encodeURIComponent(key)),
+    () => fetch("/api/admin/signals?key="      + encodeURIComponent(key)),
+  ];
+
+  for (const attempt of attempts) {
+    try {
+      const res = await attempt();
+      // 200 ou qualquer resposta JSON válida (não 401/403) = autenticado
+      if (res.status === 200) {
+        ADMIN_KEY = key;
+        localStorage.setItem("bybit_key",     key);
+        localStorage.setItem("acs_admin_key", key);
+        showApp();
+        return;
+      }
+      if (res.status === 401 || res.status === 403) {
+        errEl.textContent = "Chave inválida (401). Verifique a Admin Key.";
+        return;
+      }
+    } catch(e) { continue; }
   }
+  errEl.textContent = "Erro de conexão com o servidor.";
 }
 
 function showApp() {
@@ -355,19 +366,16 @@ function showApp() {
 function logout() {
   localStorage.removeItem("bybit_key");
   localStorage.removeItem("acs_admin_key");
+  ADMIN_KEY = "";
   location.reload();
 }
 
 // Auto-login se já tem chave salva
-const savedKey = localStorage.getItem("bybit_key") || localStorage.getItem("acs_admin_key") || "";
-if (savedKey) {
-  ADMIN_KEY = savedKey;
-  // Valida a chave antes de mostrar o app
-  fetch("/api/admin/users", { headers:{"x-admin-key": savedKey} })
-    .then(r => {
-      if (r.ok) showApp();
-      else { localStorage.removeItem("bybit_key"); localStorage.removeItem("acs_admin_key"); }
-    })
+const _saved = localStorage.getItem("bybit_key") || localStorage.getItem("acs_admin_key") || "";
+if (_saved) {
+  ADMIN_KEY = _saved;
+  fetch("/api/admin/signals", { headers:{"x-admin-key": _saved} })
+    .then(r => { if (r.status === 200) showApp(); })
     .catch(() => {});
 }
 
