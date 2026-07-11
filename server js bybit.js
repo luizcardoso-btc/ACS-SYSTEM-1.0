@@ -273,10 +273,15 @@ app.post("/api/auth/change-password", auth.requireAuth, (req, res) => {
 // ADMIN — Usuários
 // ══════════════════════════════════════════════
 
-// Rota de ping para validar admin key (usada pelo bybit-analise.html)
-app.get("/api/admin/ping", requireAdmin, (req, res) => {
-  res.json({ ok: true, ts: Date.now() });
+// Rota pública que valida admin key — sem requireAdmin middleware
+app.get("/api/admin/ping", (req, res) => {
+  const key = req.headers["x-admin-key"] || req.query.key || "";
+  const ok  = key && key === process.env.ADMIN_KEY;
+  res.json({ ok, ts: Date.now() });
 });
+
+// Rota pública de health check
+app.get("/health", (req, res) => res.json({ status:"ok", ts: Date.now() }));
 
 
 app.get("/api/admin/users", requireAdmin, (req, res) => {
