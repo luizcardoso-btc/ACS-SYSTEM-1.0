@@ -301,7 +301,7 @@ async function loadServerSignals() {
     }));
     state.profits = all.filter(s => s.status === "profit").map(s => ({
       ...s,
-      profitPct:  s.profit_pct || "+?",
+      profitPct: s.profit_pct || (s.result_pct ? "+"+s.result_pct+"%" : null) || "+?",
       timeToHit:  s.time_to_hit || "—",
     }));
 
@@ -379,6 +379,15 @@ function renderAlerts() {
       : "";
 
     if (s._type === "profit") {
+      const _pct = s.profit_pct || s.profitPct
+        || (s.result_pct ? "+"+parseFloat(s.result_pct).toFixed(1)+"%" : "+?");
+      const _dur = s.time_to_hit || s.timeToHit || "";
+      const _closedAt = s.closed_at
+        ? new Date(s.closed_at).toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})
+        : "";
+      const _openedAt = s.created_at
+        ? new Date(s.created_at).toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})
+        : (s.date||"");
       return `
         <div class="signal-card profit">
           <div class="sc-top">
@@ -386,12 +395,14 @@ function renderAlerts() {
               <div class="profit-label">
                 ✅ LUCRO ${s.pair}${s.isManual||s.source==="admin"?'<span class="manual-tag">MANUAL</span>':""}
               </div>
-              <div class="profit-sub">Meta atingida</div>
+              <div class="profit-sub">Meta atingida${_dur?" · "+_dur:""}</div>
             </div>
             <div class="profit-check">✓</div>
           </div>
-          <div class="profit-pct">${s.profitPct||s.profit_pct}</div>
-          <div class="profit-time">${s.timeToHit||s.time_to_hit||"—"} · ${s.date||""}</div>
+          <div class="profit-pct">${_pct}</div>
+          <div class="profit-time">
+            🕐 Aberto: ${_openedAt}${_closedAt?" · ✅ Fechado: "+_closedAt:""}
+          </div>
           <div class="targets-wrap" style="margin-top:7px">
             ${pillsHTML(s.targets, s.hit, s.type)}
           </div>
@@ -399,15 +410,30 @@ function renderAlerts() {
     }
 
     const isShort = s.type === "SHORT";
+    // Tempo ativo desde abertura
+    const _age = (() => {
+      if (!s.created_at) return "";
+      const ms = Date.now() - new Date(s.created_at).getTime();
+      const min = Math.floor(ms/60000);
+      if (min < 60)  return min+"min";
+      const h = Math.floor(min/60), m = min%60;
+      if (h < 24)   return h+"h "+m+"min";
+      return Math.floor(h/24)+"d "+h%24+"h";
+    })();
+    const _opened = s.created_at
+      ? new Date(s.created_at).toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})
+      : ((s.date||"")+" "+(s.time||"")).trim();
     return `
       <div class="signal-card ${s.isManual||s.source==="admin"?"manual":isShort?"short":"active"}">
         <div class="sc-top">
           <div>
-            <div style="display:flex;align-items:center;gap:6px">
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
               <span class="sc-pair ${isShort?"short":"long"}">${s.pair}</span>
               ${s.source==="admin"?'<span class="manual-tag">MANUAL</span>':""}
             </div>
-            <div class="sc-meta">${s.date||""} ${s.time||""}</div>
+            <div class="sc-meta" style="margin-top:3px">
+              🕐 ${_opened}${_age?` <span style="color:#334455">· ⏱ ${_age} ativo</span>`:""}
+            </div>
           </div>
           <div class="sc-right">
             ${typeBadgeHTML(s.type)}
@@ -415,16 +441,30 @@ function renderAlerts() {
           </div>
         </div>
         ${liveLine}
-        <div class="sc-data">
-          <div class="sc-field"><label>ENTRADA</label><span class="mono">${s.entry}</span></div>
-          <div class="sc-field"><label>ALAVANCAGEM</label><span class="bold">${s.leverage}</span></div>
-          ${s.timeframe&&s.timeframe!=="—"?`<div class="sc-field"><label>TF</label><span class="mono" style="font-size:11px">${s.timeframe}</span></div>`:""}
+        <div class="sc-data" style="margin-top:8px">
+          <div class="sc-field">
+            <label>ENTRADA</label>
+            <span class="mono" style="font-size:13px;font-weight:700">${s.entry}</span>
+          </div>
+          <div class="sc-field">
+            <label>ALAV.</label>
+            <span class="bold" style="font-size:13px">${s.leverage}</span>
+          </div>
+          ${s.timeframe&&s.timeframe!=="—"?`
+          <div class="sc-field">
+            <label>TF</label>
+            <span class="mono" style="font-size:12px">${s.timeframe}</span>
+          </div>`:""}
+          <div class="sc-field">
+            <label style="color:#ff4466;font-weight:700">STOP</label>
+            <span class="mono" style="font-size:13px;font-weight:700;color:#ff4466">${s.stoploss}</span>
+          </div>
         </div>
-        ${s.setup&&s.setup!=="MANUAL"?`<div><span class="setup-badge">${s.setup}</span></div>`:""}
+        ${s.setup&&s.setup!=="MANUAL"?`<div style="margin:4px 0"><span class="setup-badge">${s.setup}</span></div>`:""}
         ${s.reason?`<div class="sc-reason">${s.reason}</div>`:""}
         <div class="sc-targets-label">ALVOS: <span class="targets-progress">${s.hit}/${s.targets.length}</span></div>
         <div class="targets-wrap">${pillsHTML(s.targets, s.hit, s.type)}</div>
-        <div class="sc-footer">SL: ${s.stoploss} · ${s.hit}/${s.targets.length} alvos</div>
+        <div class="sc-footer" style="margin-top:4px;font-size:10px;color:#334455">${s.hit}/${s.targets.length} alvos · ${_opened}</div>
       </div>`;
   }).join("");
 
