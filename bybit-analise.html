@@ -249,32 +249,58 @@ body{background:var(--bg);color:var(--text);font-family:var(--f);min-height:100v
 
 <!-- Modal análise completa -->
 <div class="modal" id="modal">
-  <div class="modal-box">
+  <div class="modal-box" style="max-width:900px">
     <div class="modal-header">
-      <div class="modal-title" id="modalTitle">Análise Completa</div>
-      <button class="btn btn-ghost btn-sm" onclick="closeModal()">✕ Fechar</button>
+      <div>
+        <div class="modal-title" id="modalTitle">Análise Completa</div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--text2);margin-top:2px" id="modalSubtitle"></div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <select id="modalTfSwitch" onchange="switchModalTF()" style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:#fff;font-family:var(--mono);font-size:11px;outline:none">
+          <option value="15">15M</option>
+          <option value="60" selected>1H</option>
+          <option value="240">4H</option>
+          <option value="D">1D</option>
+          <option value="W">1W</option>
+        </select>
+        <button class="btn btn-ghost btn-sm" onclick="closeModal()">✕</button>
+      </div>
     </div>
 
-    <!-- Dados técnicos -->
-    <div id="modalIndicators"></div>
+    <!-- Indicadores rápidos -->
+    <div id="modalIndicators" style="margin-bottom:14px"></div>
 
-    <!-- MTF Table completa -->
-    <div id="modalMTF" style="margin:14px 0"></div>
+    <!-- GRÁFICO DE VELAS CANVAS -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:10px;margin-bottom:14px;position:relative">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <span style="font-family:var(--mono);font-size:10px;color:var(--text2);letter-spacing:1px" id="chartLabel">GRÁFICO DE VELAS</span>
+        <div style="display:flex;gap:10px;font-family:var(--mono);font-size:10px">
+          <span style="color:var(--yellow)">━ EMA200</span>
+          <span style="color:var(--blue2)">━ EMA50</span>
+          <span style="color:#C39BD3">━ EMA21</span>
+        </div>
+      </div>
+      <canvas id="candleCanvas" style="width:100%;border-radius:6px;display:block"></canvas>
+      <!-- Legenda de níveis -->
+      <div id="chartLegend" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"></div>
+    </div>
 
-    <!-- S/R -->
-    <div id="modalSR" style="margin-bottom:14px"></div>
+    <!-- Níveis operacionais (extraídos da IA) -->
+    <div id="modalLevels" style="margin-bottom:14px"></div>
 
-    <!-- Mini chart -->
-    <div id="modalChart" style="margin-bottom:14px"></div>
+    <!-- MTF + S/R em grid -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+      <div id="modalMTF"></div>
+      <div id="modalSR"></div>
+    </div>
 
-    <!-- Análise IA completa -->
+    <!-- IA completa -->
     <div class="ia-full">
       <div class="ia-title">🤖 ANÁLISE WYCKOFF + SMC COM IA</div>
-      <div id="modalIA"><div style="display:flex;align-items:center;gap:8px;color:var(--purple)"><div class="dots"><span></span><span></span><span></span></div> Analisando com IA...</div></div>
+      <div id="modalIA"><div style="display:flex;align-items:center;gap:8px;color:var(--purple)"><div class="dots"><span></span><span></span><span></span></div> Analisando...</div></div>
     </div>
 
-    <!-- Botão publicar sinal -->
-    <div id="modalActions" style="margin-top:16px;display:flex;gap:8px"></div>
+    <div id="modalActions" style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap"></div>
   </div>
 </div>
 
@@ -700,168 +726,441 @@ function renderAllCards() {
 }
 
 // ── Modal análise completa com Claude ────────────────────────────
+// ── Desenha gráfico de velas no Canvas ──────────────────────────
+function drawCandleChart(candles, levels, closes, sym) {
+  const canvas = document.getElementById("candleCanvas");
+  if (!canvas) return;
+
+  const W = canvas.parentElement.clientWidth - 20;
+  const H = 340;
+  canvas.width  = W;
+  canvas.height = H;
+  const ctx2 = canvas.getContext("2d");
+
+  const last60  = candles.slice(-60);
+  const allH    = last60.map(c => c.h);
+  const allL    = last60.map(c => c.l);
+
+  // Expande o range para incluir os níveis operacionais
+  const levelVals = Object.values(levels).filter(v => typeof v === "number" && v > 0);
+  const minP = Math.min(...allL, ...levelVals) * 0.998;
+  const maxP = Math.max(...allH, ...levelVals) * 1.002;
+  const range = maxP - minP || 1;
+
+  const PAD_L = 14, PAD_R = 80, PAD_T = 16, PAD_B = 28;
+  const chartW = W - PAD_L - PAD_R;
+  const chartH = H - PAD_T - PAD_B;
+
+  const toY = price => PAD_T + chartH - ((price - minP) / range) * chartH;
+  const candleW = Math.max(2, Math.floor(chartW / last60.length) - 1);
+
+  // Fundo
+  ctx2.fillStyle = "#070E1C";
+  ctx2.fillRect(0, 0, W, H);
+
+  // Grade horizontal
+  const gridSteps = 5;
+  ctx2.strokeStyle = "rgba(255,255,255,0.05)";
+  ctx2.lineWidth = 1;
+  for (let i = 0; i <= gridSteps; i++) {
+    const y = PAD_T + (chartH / gridSteps) * i;
+    ctx2.beginPath(); ctx2.moveTo(PAD_L, y); ctx2.lineTo(W - PAD_R, y); ctx2.stroke();
+    const price = maxP - (range / gridSteps) * i;
+    ctx2.fillStyle = "rgba(100,116,139,0.8)";
+    ctx2.font = "9px 'Share Tech Mono', monospace";
+    ctx2.fillText("$" + (price < 1 ? price.toFixed(4) : price.toFixed(2)), W - PAD_R + 4, y + 3);
+  }
+
+  // EMAs
+  const ema21v  = calcEMA(closes, 21);
+  const ema50v  = calcEMA(closes, 50);
+  const ema200v = calcEMA(closes, 200);
+  const startIdx = closes.length - 60;
+
+  function drawEMA(emaArr, color, label) {
+    ctx2.strokeStyle = color;
+    ctx2.lineWidth = 1.5;
+    ctx2.setLineDash([]);
+    ctx2.beginPath();
+    last60.forEach((_, i) => {
+      const val = emaArr[startIdx + i];
+      if (!val) return;
+      const x = PAD_L + (i / (last60.length - 1)) * chartW;
+      const y = toY(val);
+      i === 0 ? ctx2.moveTo(x, y) : ctx2.lineTo(x, y);
+    });
+    ctx2.stroke();
+  }
+  drawEMA(ema21v,  "rgba(195,155,211,0.7)", "EMA21");
+  drawEMA(ema50v,  "rgba(96,165,250,0.7)",  "EMA50");
+  drawEMA(ema200v, "rgba(255,215,0,0.85)",  "EMA200");
+
+  // Velas
+  last60.forEach((c, i) => {
+    const x    = PAD_L + (i / (last60.length - 1)) * chartW - candleW / 2;
+    const isBull = c.c >= c.o;
+    const color  = isBull ? "#00FF88" : "#FF4466";
+    const yHigh  = toY(c.h), yLow = toY(c.l);
+    const yOpen  = toY(c.o), yClose = toY(c.c);
+    const bodyT  = Math.min(yOpen, yClose);
+    const bodyH  = Math.max(Math.abs(yClose - yOpen), 1);
+
+    // Pavio
+    ctx2.strokeStyle = color;
+    ctx2.lineWidth = 1;
+    ctx2.beginPath();
+    ctx2.moveTo(x + candleW/2, yHigh);
+    ctx2.lineTo(x + candleW/2, yLow);
+    ctx2.stroke();
+
+    // Corpo
+    ctx2.fillStyle = isBull ? "rgba(0,255,136,0.85)" : "rgba(255,68,102,0.85)";
+    ctx2.fillRect(x, bodyT, candleW, bodyH);
+  });
+
+  // ── Linhas de níveis operacionais ──
+  function drawLevel(price, color, label, dash = [4, 3]) {
+    if (!price || price <= 0) return;
+    const y = toY(price);
+    if (y < PAD_T - 5 || y > H - PAD_B + 5) return;
+
+    ctx2.strokeStyle = color;
+    ctx2.lineWidth   = 1.5;
+    ctx2.setLineDash(dash);
+    ctx2.beginPath();
+    ctx2.moveTo(PAD_L, y);
+    ctx2.lineTo(W - PAD_R, y);
+    ctx2.stroke();
+    ctx2.setLineDash([]);
+
+    // Label à direita
+    ctx2.fillStyle = color;
+    ctx2.font = "bold 9px 'Share Tech Mono', monospace";
+    ctx2.fillText(label, W - PAD_R + 4, y - 2);
+    ctx2.font = "8px 'Share Tech Mono', monospace";
+    ctx2.fillStyle = "rgba(255,255,255,0.5)";
+    const priceFmtL = price < 1 ? price.toFixed(4) : price.toFixed(2);
+    ctx2.fillText("$" + priceFmtL, W - PAD_R + 4, y + 9);
+  }
+
+  // Suportes e resistências (pontilhado suave)
+  (levels.supports || []).forEach(s  => drawLevel(s,  "rgba(0,200,255,0.5)",  "SUP", [3,4]));
+  (levels.resistances || []).forEach(r => drawLevel(r, "rgba(255,107,53,0.5)", "RES", [3,4]));
+
+  // Stop Loss (vermelho)
+  drawLevel(levels.sl,  "#FF4466", "STOP", [6,3]);
+
+  // Entrada (branco sólido)
+  if (levels.entry) {
+    ctx2.strokeStyle = "rgba(255,255,255,0.9)";
+    ctx2.lineWidth   = 2;
+    ctx2.setLineDash([]);
+    ctx2.beginPath();
+    ctx2.moveTo(PAD_L, toY(levels.entry));
+    ctx2.lineTo(W - PAD_R, toY(levels.entry));
+    ctx2.stroke();
+    ctx2.fillStyle = "#fff";
+    ctx2.font = "bold 9px 'Share Tech Mono', monospace";
+    ctx2.fillText("ENTRADA", W - PAD_R + 4, toY(levels.entry) - 2);
+    ctx2.font = "8px 'Share Tech Mono', monospace";
+    ctx2.fillStyle = "rgba(255,255,255,0.5)";
+    ctx2.fillText("$" + (levels.entry < 1 ? levels.entry.toFixed(4) : levels.entry.toFixed(2)), W - PAD_R + 4, toY(levels.entry) + 9);
+  }
+
+  // TPs (verde com tonalidades)
+  const tpColors = ["rgba(0,255,136,0.9)","rgba(0,255,136,0.7)","rgba(0,255,136,0.5)"];
+  ["tp1","tp2","tp3"].forEach((k, i) => {
+    if (levels[k]) drawLevel(levels[k], tpColors[i], `TP${i+1}`, [5,3]);
+  });
+
+  // Preço atual (linha fina branca)
+  const curPrice = last60.at(-1).c;
+  ctx2.strokeStyle = "rgba(255,255,255,0.25)";
+  ctx2.lineWidth   = 1;
+  ctx2.setLineDash([2,4]);
+  ctx2.beginPath();
+  ctx2.moveTo(PAD_L, toY(curPrice));
+  ctx2.lineTo(W - PAD_R, toY(curPrice));
+  ctx2.stroke();
+  ctx2.setLineDash([]);
+
+  // Eixo X — horários
+  ctx2.fillStyle = "rgba(100,116,139,0.7)";
+  ctx2.font = "8px 'Share Tech Mono', monospace";
+  [0, Math.floor(last60.length/3), Math.floor(last60.length*2/3), last60.length-1].forEach(i => {
+    const c = last60[i]; if (!c) return;
+    const x = PAD_L + (i / (last60.length - 1)) * chartW;
+    const dt = new Date(c.t).toLocaleTimeString("pt-BR", {hour:"2-digit", minute:"2-digit"});
+    ctx2.fillText(dt, x - 10, H - 8);
+  });
+}
+
+// ── Extrai níveis numéricos da resposta da IA ─────────────────────
+function extractLevels(iaText, curPrice, sc) {
+  const levels = { entry: null, sl: null, tp1: null, tp2: null, tp3: null, supports: [], resistances: [] };
+  const findNum = (pattern) => {
+    const m = iaText.match(pattern);
+    return m ? parseFloat(m[1].replace(/,/g,".")) : null;
+  };
+  levels.entry = findNum(/[Ee]ntrada[^$]*\$\s*([\d.,]+)/);
+  levels.sl    = findNum(/[Ss]top[^$]*\$\s*([\d.,]+)/);
+  levels.tp1   = findNum(/TP1[^$]*\$\s*([\d.,]+)/);
+  levels.tp2   = findNum(/TP2[^$]*\$\s*([\d.,]+)/);
+  levels.tp3   = findNum(/TP3[^$]*\$\s*([\d.,]+)/);
+
+  // Se IA não retornou, calcula automaticamente baseado no preço atual
+  if (!levels.entry) levels.entry = curPrice;
+  if (!levels.sl && curPrice) {
+    const atr = curPrice * 0.02;
+    levels.sl = sc.dir === "LONG" ? curPrice - atr * 1.5 : curPrice + atr * 1.5;
+  }
+  if (!levels.tp1 && curPrice) levels.tp1 = sc.dir === "LONG" ? curPrice * 1.03  : curPrice * 0.97;
+  if (!levels.tp2 && curPrice) levels.tp2 = sc.dir === "LONG" ? curPrice * 1.20  : curPrice * 0.80;
+  if (!levels.tp3 && curPrice) levels.tp3 = sc.dir === "LONG" ? curPrice * 1.40  : curPrice * 0.60;
+
+  return levels;
+}
+
+// ── Modal principal ───────────────────────────────────────────────
+let currentModalData = null;
+
 async function openModal(r) {
   currentModal = r;
-  const {sym,cur,wy,sc,rsi,macd,sr,mtfData,candles,closes,tf} = r;
-  document.getElementById("modalTitle").textContent = `${sym} — Análise Wyckoff Completa`;
+  currentModalData = r;
+  const {sym, cur, wy, sc, rsi, macd, sr, mtfData, candles, closes, tf} = r;
+  const priceFmt = cur < 1 ? cur.toFixed(6) : cur < 100 ? cur.toFixed(4) : cur.toFixed(2);
+  const dirCol   = sc.dir === "LONG" ? "var(--green)" : sc.dir === "SHORT" ? "var(--red)" : "var(--text2)";
+  const tfLabel  = TF_LABELS[tf] || tf;
+
+  document.getElementById("modalTitle").textContent    = `${sym.replace("USDT","")}/USDT`;
+  document.getElementById("modalSubtitle").textContent = `${tfLabel} · Wyckoff: ${wy.fase} · Score: ${sc.score}/${sc.maxScore} · ${sc.dir}`;
+  document.getElementById("modalTfSwitch").value       = tf;
   document.getElementById("modal").classList.add("open");
 
-  // Indicadores
-  const priceFmt = cur<1?cur.toFixed(6):cur<100?cur.toFixed(4):cur.toFixed(2);
+  // Indicadores rápidos
   document.getElementById("modalIndicators").innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px">
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
       ${[
-        {l:"PREÇO",v:"$"+priceFmt,c:"#fff"},
-        {l:"RSI",v:rsi.toFixed(1),c:rsi>70?"var(--red)":rsi<30?"var(--green)":"var(--text)"},
-        {l:"MACD HIST",v:(macd.hist>0?"+":"")+macd.hist.toFixed(6),c:macd.hist>0?"var(--green)":"var(--red)"},
-        {l:"FASE WYCKOFF",v:wy.fase,c:wy.fase==="ACUMULAÇÃO"||wy.fase==="MARKUP"?"var(--green)":"wy.fase==='DISTRIBUIÇÃO'||wy.fase==='MARKDOWN'?'var(--red)':'var(--text2)'"},
-        {l:"EMA200",v:"$"+wy.ema200.toFixed(cur<1?5:2),c:cur>wy.ema200?"var(--green)":"var(--red)"},
-        {l:"EMA50",v:"$"+wy.ema50.toFixed(cur<1?5:2),c:cur>wy.ema50?"var(--green)":"var(--red)"},
-        {l:"SPRING",v:wy.spring?"DETECTADO ⚡":"—",c:wy.spring?"var(--green)":"var(--text2)"},
-        {l:"UPTHRUST",v:wy.upthrust?"DETECTADO ⚠️":"—",c:wy.upthrust?"var(--red)":"var(--text2)"},
+        {l:"PREÇO ATUAL",   v:"$"+priceFmt,               c:"#fff"},
+        {l:"RSI(14)",       v:rsi.toFixed(1),              c:rsi>70?"var(--red)":rsi<30?"var(--green)":"var(--text)"},
+        {l:"MACD",          v:macd.hist>0?"BULLISH ↑":"BEARISH ↓", c:macd.hist>0?"var(--green)":"var(--red)"},
+        {l:"DIREÇÃO",       v:sc.dir,                      c:dirCol},
+        {l:"FASE WYCKOFF",  v:wy.fase,                     c:wy.fase==="ACUMULAÇÃO"||wy.fase==="MARKUP"?"var(--green)":wy.fase==="INDEFINIDA"?"var(--text2)":"var(--red)"},
+        {l:"EMA200",        v:cur>wy.ema200?"ACIMA ✅":"ABAIXO ⛔",  c:cur>wy.ema200?"var(--green)":"var(--red)"},
+        {l:"SPRING",        v:wy.spring?"DETECTADO ⚡":"—", c:wy.spring?"var(--green)":"var(--text2)"},
+        {l:"UPTHRUST",      v:wy.upthrust?"DETECTADO ⚠️":"—", c:wy.upthrust?"var(--red)":"var(--text2)"},
       ].map(x=>`
         <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px">
           <div style="font-family:var(--mono);font-size:10px;color:var(--text2);margin-bottom:4px">${x.l}</div>
-          <div style="font-family:var(--mono);font-size:13px;font-weight:700;color:${x.c}">${x.v}</div>
+          <div style="font-family:var(--mono);font-size:12px;font-weight:700;color:${x.c}">${x.v}</div>
         </div>`).join("")}
     </div>`;
 
-  // MTF completo
+  // MTF
   document.getElementById("modalMTF").innerHTML = `
-    <div style="font-family:var(--mono);font-size:10px;color:var(--text2);letter-spacing:1px;margin-bottom:8px">MULTI-TIMEFRAME EMA200</div>
-    <table style="width:100%;border-collapse:collapse">
-      <thead><tr>
-        <th style="text-align:left;padding:6px;font-size:10px;color:var(--text2);font-family:var(--mono)">TF</th>
-        <th style="text-align:left;padding:6px;font-size:10px;color:var(--text2);font-family:var(--mono)">EMA200</th>
-        <th style="text-align:left;padding:6px;font-size:10px;color:var(--text2);font-family:var(--mono)">DISTÂNCIA</th>
-        <th style="text-align:left;padding:6px;font-size:10px;color:var(--text2);font-family:var(--mono)">RSI</th>
-        <th style="text-align:left;padding:6px;font-size:10px;color:var(--text2);font-family:var(--mono)">STATUS</th>
-      </tr></thead>
-      <tbody>
-        ${mtfData.map(t=>{
-          const diff=((cur-t.ema200)/t.ema200*100).toFixed(2);
-          const rsiCol=t.rsi>70?"var(--red)":t.rsi<30?"var(--green)":"var(--text)";
-          return `<tr style="border-bottom:1px solid rgba(255,255,255,.04)">
-            <td style="padding:6px;font-family:var(--mono);font-weight:700">${t.label}</td>
-            <td style="padding:6px;font-family:var(--mono);font-size:11px">$${t.ema200.toFixed(cur<1?5:2)}</td>
-            <td style="padding:6px;font-family:var(--mono);font-size:11px;color:${t.above?"var(--green)":"var(--red)"}">${t.above?"+":""}${diff}%</td>
-            <td style="padding:6px;font-family:var(--mono);font-size:11px;color:${rsiCol}">${t.rsi.toFixed(1)}</td>
-            <td style="padding:6px"><span class="badge ${t.above?"badge-long":"badge-short"}">${t.above?"BULL ▲":"BEAR ▼"}</span></td>
-          </tr>`;
-        }).join("")}
-      </tbody>
-    </table>`;
+    <div style="font-family:var(--mono);font-size:10px;color:var(--text2);letter-spacing:1px;margin-bottom:8px">MTF EMA200 (${sc.bullTFs}/${MTF_SEQUENCE.length} BULL)</div>
+    ${mtfData.map(t => {
+      const diff = ((cur - t.ema200)/t.ema200*100).toFixed(1);
+      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04)">
+        <span style="font-family:var(--mono);font-size:11px;font-weight:700;color:#fff;min-width:40px">${t.label}</span>
+        <span class="badge ${t.above?"badge-long":"badge-short"}">${t.above?"▲":"▼"}</span>
+        <span style="font-family:var(--mono);font-size:10px;color:${t.above?"var(--green)":"var(--red)"}">${t.above?"+":""}${diff}%</span>
+        <span style="font-family:var(--mono);font-size:10px;color:${t.rsi>70?"var(--red)":t.rsi<30?"var(--green)":"var(--text2)"}">RSI ${t.rsi.toFixed(0)}</span>
+      </div>`;
+    }).join("")}`;
 
   // S/R
   document.getElementById("modalSR").innerHTML = `
     <div style="font-family:var(--mono);font-size:10px;color:var(--text2);letter-spacing:1px;margin-bottom:8px">SUPORTE & RESISTÊNCIA</div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
-      ${sr.sup.map(s=>`<span class="sr-chip sr-sup" style="font-size:12px;padding:4px 12px">Sup $${s.toFixed(cur<1?5:2)}</span>`).join("")}
-      ${sr.res.map(r=>`<span class="sr-chip sr-res" style="font-size:12px;padding:4px 12px">Res $${r.toFixed(cur<1?5:2)}</span>`).join("")}
+    ${[...sr.res.slice().reverse().map(r=>({v:r,t:"RES",c:"rgba(255,107,53,.9)"})),
+       ...sr.sup.slice().reverse().map(s=>({v:s,t:"SUP",c:"rgba(0,200,255,.9)"}))
+      ].map(n=>`
+        <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04)">
+          <span style="font-family:var(--mono);font-size:10px;color:${n.c};font-weight:700">${n.t}</span>
+          <span style="font-family:var(--mono);font-size:11px;color:#fff">$${n.v.toFixed(cur<1?5:2)}</span>
+          <span style="font-family:var(--mono);font-size:10px;color:var(--text2)">${((n.v-cur)/cur*100).toFixed(2)}%</span>
+        </div>`).join("")}`;
+
+  // Desenha gráfico inicial com níveis estimados
+  const initLevels = {
+    entry: cur,
+    sl:    sc.dir==="LONG" ? cur*0.98 : cur*1.02,
+    tp1:   sc.dir==="LONG" ? cur*1.03 : cur*0.97,
+    tp2:   sc.dir==="LONG" ? cur*1.20 : cur*0.80,
+    tp3:   sc.dir==="LONG" ? cur*1.40 : cur*0.60,
+    supports: sr.sup, resistances: sr.res,
+  };
+  document.getElementById("chartLabel").textContent = `GRÁFICO DE VELAS · ${sym} · ${tfLabel}`;
+  setTimeout(() => drawCandleChart(candles, initLevels, closes, sym), 50);
+
+  // Legenda inicial
+  renderChartLegend(initLevels, sc.dir, priceFmt);
+
+  // Níveis placeholder
+  document.getElementById("modalLevels").innerHTML = `
+    <div style="background:rgba(155,89,182,.06);border:1px solid rgba(155,89,182,.2);border-radius:10px;padding:12px">
+      <div style="font-family:var(--mono);font-size:10px;color:var(--purple);margin-bottom:8px">NÍVEIS ESTIMADOS (IA calculando...)</div>
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px">
+        ${renderLevelBoxes(initLevels, cur, sc.dir)}
+      </div>
     </div>`;
 
-  // Mini chart maior
-  const last40=candles.slice(-40);
-  const minP=Math.min(...last40.map(c=>c.l)), maxP=Math.max(...last40.map(c=>c.h));
-  document.getElementById("modalChart").innerHTML = `
-    <div style="font-family:var(--mono);font-size:10px;color:var(--text2);letter-spacing:1px;margin-bottom:6px">ÚLTIMAS 40 VELAS (${TF_LABELS[tf]||tf})</div>
-    <div style="height:80px;display:flex;align-items:flex-end;gap:2px;background:var(--bg3);border-radius:8px;padding:6px;overflow:hidden">
-      ${last40.map(c=>{
-        const h=Math.round(((c.c>c.o?c.c:c.o)-minP)/(maxP-minP||1)*60)+4;
-        return `<div style="flex:1;min-width:5px;height:${h}px;border-radius:1px;background:${c.c>=c.o?"var(--green)":"var(--red)"};opacity:.8"></div>`;
-      }).join("")}
-    </div>`;
+  // Análise IA
+  document.getElementById("modalIA").innerHTML = '<div style="display:flex;align-items:center;gap:8px;color:var(--purple)"><div class="dots"><span></span><span></span><span></span></div> Analisando Wyckoff + SMC com IA...</div>';
 
-  // Análise Claude
-  document.getElementById("modalIA").innerHTML = '<div style="display:flex;align-items:center;gap:8px;color:var(--purple)"><div class="dots"><span></span><span></span><span></span></div> Analisando com IA Wyckoff...</div>';
-
-  // Monta contexto rico
-  const ctx = `
-ANÁLISE WYCKOFF COMPLETA — ${sym}
-Timeframe: ${TF_LABELS[tf]||tf} | Data: ${new Date().toLocaleString("pt-BR")}
-
-═══ PREÇO E EMAs ═══
-Preço atual: $${priceFmt}
-EMA21:  $${calcEMA(closes,21).at(-1).toFixed(cur<1?5:2)} (${cur>calcEMA(closes,21).at(-1)?"ACIMA":"ABAIXO"})
-EMA50:  $${wy.ema50.toFixed(cur<1?5:2)} (${cur>wy.ema50?"ACIMA":"ABAIXO"})
-EMA200: $${wy.ema200.toFixed(cur<1?5:2)} (${cur>wy.ema200?"ACIMA ✅":"ABAIXO ⛔"})
-
-═══ INDICADORES ═══
-RSI(14): ${rsi.toFixed(2)} — ${rsi>70?"SOBRECOMPRADO":rsi<30?"SOBREVENDIDO":"NEUTRO"}
-MACD Histograma: ${macd.hist>0?"+":""}${macd.hist.toFixed(8)} ${macd.hist>macd.histPrev?"↑ crescendo":"↓ caindo"}
-MACD vs Signal: ${macd.macd>macd.signal?"ACIMA (bullish)":"ABAIXO (bearish)"}
-
-═══ WYCKOFF ═══
-Fase detectada: ${wy.fase}
-Posição no range (0=fundo, 1=topo): ${(wy.posInRange*100).toFixed(0)}%
-Spring detectado: ${wy.spring?"SIM ⚡":"NÃO"}
-Upthrust detectado: ${wy.upthrust?"SIM ⚠️":"NÃO"}
-
-═══ MULTI-TIMEFRAME EMA200 ═══
-Score: ${sc.bullTFs}/${MTF_SEQUENCE.length} timeframes acima da EMA200
-${mtfData.map(t=>`${t.label}: ${t.above?"ACIMA":"ABAIXO"} (RSI: ${t.rsi.toFixed(1)})`).join("\n")}
-
-═══ SUPORTE E RESISTÊNCIA ═══
-Suportes: ${sr.sup.map(s=>"$"+s.toFixed(cur<1?5:2)).join(" | ")||"—"}
-Resistências: ${sr.res.map(r=>"$"+r.toFixed(cur<1?5:2)).join(" | ")||"—"}
-
-═══ SCORE CONFLUÊNCIA ═══
-Score total: ${sc.score}/${sc.maxScore}
-Direção sugerida: ${sc.dir}
-Sinais: ${sc.signals.map(s=>s.t).join(" | ")}
-`;
+  // Contexto para Claude
+  const ctx3 = buildIAContext(sym, tfLabel, cur, priceFmt, wy, rsi, macd, sc, mtfData, sr, closes);
 
   try {
     const res = await fetch("/api/claude", {
-      method:"POST",
-      headers:{"Content-Type":"application/json","x-admin-key":ADMIN_KEY},
+      method: "POST",
+      headers: {"Content-Type":"application/json","x-admin-key": ADMIN_KEY},
       body: JSON.stringify({
-        max_tokens: 1800,
-        system: `Você é um analista técnico sênior especializado em Método Wyckoff para futuros cripto na Bybit.
+        max_tokens: 2000,
+        system: `Você é um analista técnico sênior especializado em Wyckoff + SMC para futuros cripto na Bybit.
 
-Analise os dados fornecidos com profundidade e retorne no seguinte formato exato:
+RETORNE OBRIGATORIAMENTE os valores numéricos dos níveis no seguinte formato (para que o gráfico possa marcá-los):
+
+NÍVEIS OPERACIONAIS:
+Entrada ideal: $VALOR
+Stop Loss: $VALOR
+TP1: $VALOR
+TP2: $VALOR
+TP3: $VALOR
+
+Depois analise detalhadamente:
 
 📊 LEITURA WYCKOFF
-[Descreva a fase exata (Acumulação/Markup/Distribuição/Markdown/Indefinida), o que está acontecendo na estrutura de preço, se há Spring ou Upthrust, e o que o volume indica]
+[Fase, estrutura, Spring/Upthrust, volume]
 
-🎯 CONTEXTO TÉCNICO
-[RSI, MACD, EMAs — o que cada um confirma ou contradiz. Confluência ou divergência entre indicadores]
-
-📍 NÍVEIS OPERACIONAIS
-Entrada ideal: $X
-Stop Loss: $X (X% — 1 ATR abaixo/acima do nível chave)
-TP1 (+3-5%): $X
-TP2 (+15-25%): $X
-TP3 (+40%+): $X
-R/R estimado: X:1
+🎯 CONTEXTO TÉCNICO  
+[RSI, MACD, EMAs — confluências e divergências]
 
 ⚡ CONFLUÊNCIAS MTF
-[Quais timeframes confirmam? Há divergência entre TFs curtos e longos?]
+[Quais TFs confirmam? Quais divergem?]
 
 ⚠️ RISCOS E INVALIDAÇÕES
-[O que invalidaria esse setup? Onde o preço não pode ir?]
+[O que invalida o setup? Nível crítico de invalidação]
 
 ✅ VEREDICTO FINAL
 Operação: LONG / SHORT / AGUARDAR
 Confiança: X/10
-[Uma linha explicando a decisão]`,
-        messages:[{role:"user", content:ctx}]
-      })
+[Justificativa em 1-2 linhas]`,
+        messages: [{role:"user", content: ctx3}],
+      }),
     });
-    const d = await res.json();
-    const text = (d.content||[]).map(b=>b.text||"").join("");
-    document.getElementById("modalIA").innerHTML = `<div class="ia-text">${text.replace(/\n/g,"<br/>")}</div>`;
 
-    // Botão publicar sinal
+    const d    = await res.json();
+    const text = (d.content || []).map(b => b.text || "").join("");
+
+    // Extrai níveis e redesenha gráfico
+    const levels = extractLevels(text, cur, sc);
+    levels.supports    = sr.sup;
+    levels.resistances = sr.res;
+    setTimeout(() => drawCandleChart(candles, levels, closes, sym), 50);
+    renderChartLegend(levels, sc.dir, priceFmt);
+
+    // Atualiza caixas de níveis
+    document.getElementById("modalLevels").innerHTML = `
+      <div style="background:rgba(0,255,136,.04);border:1px solid rgba(0,255,136,.15);border-radius:10px;padding:12px">
+        <div style="font-family:var(--mono);font-size:10px;color:var(--green);margin-bottom:8px">📍 NÍVEIS OPERACIONAIS — MARCADOS NO GRÁFICO</div>
+        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px">
+          ${renderLevelBoxes(levels, cur, sc.dir)}
+        </div>
+      </div>`;
+
+    // Texto da IA
+    document.getElementById("modalIA").innerHTML = `<div class="ia-text">${text.replace(/
+/g,"<br/>")}</div>`;
+
+    // Botões
     document.getElementById("modalActions").innerHTML = `
-      <button class="btn btn-primary" onclick="prepareSignal('${sym}','${sc.dir}','${priceFmt}')">
-        📡 Publicar como Sinal no ACS SYSTEM
+      <button class="btn btn-primary" onclick="prepareSignal('${sym}','${sc.dir}','${(levels.entry||cur).toFixed(cur<1?4:2)}','${(levels.sl||0).toFixed(cur<1?4:2)}','${(levels.tp1||0).toFixed(cur<1?4:2)},${(levels.tp2||0).toFixed(cur<1?4:2)},${(levels.tp3||0).toFixed(cur<1?4:2)}')">
+        📡 Publicar como Sinal
       </button>
       <button class="btn btn-ghost" onclick="closeModal()">Fechar</button>`;
 
   } catch(e) {
-    document.getElementById("modalIA").innerHTML = `<div style="color:var(--red)">Erro IA: ${e.message}</div>`;
+    document.getElementById("modalIA").innerHTML = `<div style="color:var(--red)">Erro: ${e.message}</div>`;
   }
+}
+
+function renderLevelBoxes(levels, cur, dir) {
+  const isLong = dir === "LONG";
+  return [
+    {l:"STOP LOSS",  v:levels.sl,   c:"var(--red)"},
+    {l:"ENTRADA",    v:levels.entry, c:"#fff"},
+    {l:"TP1",        v:levels.tp1,   c:"rgba(0,255,136,.7)"},
+    {l:"TP2",        v:levels.tp2,   c:"rgba(0,255,136,.9)"},
+    {l:"TP3",        v:levels.tp3,   c:"var(--green)"},
+  ].map(n => {
+    const pct = n.v && cur ? ((n.v-cur)/cur*100) : 0;
+    const fmt = n.v ? "$"+(n.v<1?n.v.toFixed(4):n.v.toFixed(2)) : "—";
+    return `<div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:8px;text-align:center">
+      <div style="font-family:var(--mono);font-size:9px;color:var(--text2);margin-bottom:4px">${n.l}</div>
+      <div style="font-family:var(--mono);font-size:12px;font-weight:700;color:${n.c}">${fmt}</div>
+      ${n.v && n.l!=="ENTRADA" ? `<div style="font-family:var(--mono);font-size:9px;color:${pct>=0?"var(--green)":"var(--red)"}">${pct>=0?"+":""}${pct.toFixed(1)}%</div>` : ""}
+    </div>`;
+  }).join("");
+}
+
+function renderChartLegend(levels, dir, curFmt) {
+  const leg = document.getElementById("chartLegend");
+  if (!leg) return;
+  leg.innerHTML = [
+    levels.sl   ? {t:"STOP: $"+(levels.sl<1?levels.sl.toFixed(4):levels.sl.toFixed(2)),   c:"#FF4466"} : null,
+    levels.entry? {t:"ENTRADA: $"+(levels.entry<1?levels.entry.toFixed(4):levels.entry.toFixed(2)), c:"#fff"} : null,
+    levels.tp1  ? {t:"TP1: $"+(levels.tp1<1?levels.tp1.toFixed(4):levels.tp1.toFixed(2)),  c:"rgba(0,255,136,.7)"} : null,
+    levels.tp2  ? {t:"TP2: $"+(levels.tp2<1?levels.tp2.toFixed(4):levels.tp2.toFixed(2)),  c:"rgba(0,255,136,.9)"} : null,
+    levels.tp3  ? {t:"TP3: $"+(levels.tp3<1?levels.tp3.toFixed(4):levels.tp3.toFixed(2)),  c:"#00FF88"} : null,
+  ].filter(Boolean).map(n =>
+    `<span style="font-family:var(--mono);font-size:10px;color:${n.c};background:rgba(255,255,255,.04);padding:3px 8px;border-radius:4px">${n.t}</span>`
+  ).join("");
+}
+
+function buildIAContext(sym, tfLabel, cur, priceFmt, wy, rsi, macd, sc, mtfData, sr, closes) {
+  return `ANÁLISE WYCKOFF COMPLETA — ${sym}
+Timeframe: ${tfLabel} | Data: ${new Date().toLocaleString("pt-BR")}
+
+PREÇO ATUAL: $${priceFmt}
+EMA21:  $${calcEMA(closes,21).at(-1).toFixed(cur<1?5:2)} (${cur>calcEMA(closes,21).at(-1)?"ACIMA":"ABAIXO"})
+EMA50:  $${wy.ema50.toFixed(cur<1?5:2)} (${cur>wy.ema50?"ACIMA":"ABAIXO"})
+EMA200: $${wy.ema200.toFixed(cur<1?5:2)} (${cur>wy.ema200?"ACIMA ✅":"ABAIXO ⛔"})
+
+RSI(14): ${rsi.toFixed(2)} — ${rsi>70?"SOBRECOMPRADO":rsi<30?"SOBREVENDIDO":"NEUTRO"}
+MACD Hist: ${macd.hist>0?"+":""}${macd.hist.toFixed(8)} ${macd.hist>macd.histPrev?"↑ crescendo":"↓ caindo"}
+
+WYCKOFF: ${wy.fase}
+Posição no range: ${(wy.posInRange*100).toFixed(0)}%
+Spring: ${wy.spring?"SIM ⚡":"NÃO"} | Upthrust: ${wy.upthrust?"SIM ⚠️":"NÃO"}
+
+MTF SCORE: ${sc.bullTFs}/${MTF_SEQUENCE.length}
+${mtfData.map(t=>`${t.label}: ${t.above?"ACIMA":"ABAIXO"} EMA200 (RSI ${t.rsi.toFixed(0)})`).join("
+")}
+
+SUPORTES: ${sr.sup.map(s=>"$"+s.toFixed(cur<1?5:2)).join(" | ")||"—"}
+RESISTÊNCIAS: ${sr.res.map(r=>"$"+r.toFixed(cur<1?5:2)).join(" | ")||"—"}
+
+Score confluência: ${sc.score}/${sc.maxScore} — ${sc.dir}`;
+}
+
+// Switch de TF no modal
+async function switchModalTF() {
+  if (!currentModalData) return;
+  const newTF = document.getElementById("modalTfSwitch").value;
+  const sym   = currentModalData.sym;
+  try {
+    const candles = await fetchCandles(sym, newTF, 250);
+    const closes  = candles.map(c => c.c);
+    const rsi     = calcRSI(closes);
+    const macd    = calcMACD(closes);
+    const wy      = detectWyckoff(candles, closes, rsi);
+    const sc      = calcScore(wy, rsi, macd, currentModalData.mtfData, candles, closes);
+    const sr      = findSR(candles);
+    const newR    = { ...currentModalData, candles, closes, rsi, macd, wy, sc, sr, tf: newTF };
+    closeModal();
+    setTimeout(() => openModal(newR), 100);
+  } catch(e) { alert("Erro ao trocar TF: "+e.message); }
 }
 
 function closeModal() { document.getElementById("modal").classList.remove("open"); }
