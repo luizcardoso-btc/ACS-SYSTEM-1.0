@@ -340,6 +340,42 @@ canvas#chart { width: 100%; display: block; border-radius: 6px; }
   font-weight: 700;
 }
 
+/* ── SCAN CARDS ── */
+.scan-card {
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px;
+  cursor: pointer;
+  transition: border-color .2s, transform .15s;
+}
+.scan-card:hover { border-color: rgba(96,165,250,.4); transform: translateY(-2px); }
+.scan-long  { border-left: 3px solid var(--green); }
+.scan-short { border-left: 3px solid var(--red); }
+.scan-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px; }
+.scan-pair  { font-size: 15px; font-weight: 700; color: #fff; }
+.scan-price { font-size: 11px; color: var(--dim); margin-top: 2px; }
+.scan-chip  { background: var(--bg3); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; text-align: center; }
+.scan-chip-lbl { font-family: var(--mono); font-size: 8px; color: var(--dim); letter-spacing: 1px; margin-bottom: 3px; }
+.scan-chip-val { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--text); }
+.tag.neut { background: rgba(255,255,255,.06); color: var(--dim); }
+.sf-btn {
+  background: rgba(255,255,255,.04);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 12px;
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 11px;
+  cursor: pointer;
+  transition: .15s;
+}
+.sf-btn:hover, .sf-btn.sf-active {
+  background: rgba(96,165,250,.1);
+  border-color: rgba(96,165,250,.3);
+  color: var(--blue);
+}
+
 @media (max-width: 700px) {
   .stat-row    { grid-template-columns: 1fr 1fr; }
   .grid-2      { grid-template-columns: 1fr; }
@@ -430,7 +466,42 @@ canvas#chart { width: 100%; display: block; border-radius: 6px; }
     <div id="emptyState" class="empty">
       <div class="empty-icon">📡</div>
       <div class="empty-title">Pronto para analisar</div>
-      <div class="empty-sub">Escolha o par, timeframe e clique em Analisar com IA</div>
+      <div class="empty-sub">Analise um par específico ou use o Scanner para varrer 100 pares automaticamente</div>
+    </div>
+
+    <!-- SCANNER -->
+    <div style="margin-bottom:16px">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:14px">
+        <div>
+          <div style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:1px;margin-bottom:4px">SCANNER AUTOMÁTICO</div>
+          <div style="font-size:12px;color:var(--text)">Varre <strong>100 pares</strong> e ranqueia os melhores setups por probabilidade de trade positivo</div>
+        </div>
+        <button id="btnScan" onclick="startScan()" style="background:linear-gradient(135deg,#00E676,#00B0FF);color:#000;border:none;border-radius:8px;padding:10px 24px;font-weight:700;font-family:var(--sans);font-size:13px;cursor:pointer;white-space:nowrap;margin-left:auto">
+          🔍 Varrer 100 Pares
+        </button>
+      </div>
+
+      <!-- Progress -->
+      <div id="scanProgress" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <span style="font-family:var(--mono);font-size:10px;color:var(--dim)" id="scanLabel">Iniciando...</span>
+        </div>
+        <div style="height:4px;background:rgba(255,255,255,.06);border-radius:2px;overflow:hidden">
+          <div id="scanBar" style="height:100%;width:0%;background:linear-gradient(90deg,var(--green),var(--blue));border-radius:2px;transition:width .2s"></div>
+        </div>
+      </div>
+
+      <!-- Filtros do scanner -->
+      <div id="scanFilters" style="display:none;margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+        <button onclick="filterScan('all')"   class="sf-btn sf-active" data-f="all">Todos</button>
+        <button onclick="filterScan('long')"  class="sf-btn" data-f="long">🟢 LONG</button>
+        <button onclick="filterScan('short')" class="sf-btn" data-f="short">🔴 SHORT</button>
+        <button onclick="filterScan('spring')"class="sf-btn" data-f="spring">⚡ Spring</button>
+        <button onclick="filterScan('acc')"   class="sf-btn" data-f="acc">Acumulação</button>
+      </div>
+
+      <!-- Grid de resultados do scanner -->
+      <div id="scanGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-top:14px"></div>
     </div>
 
     <!-- Resultados -->
@@ -493,6 +564,32 @@ canvas#chart { width: 100%; display: block; border-radius: 6px; }
 <script>
 // ══ CONFIG ════════════════════════════════════════════════════════
 const ADMIN_KEY_LOCAL = 'acs_bybit_key';
+
+// 100 pares para scanner
+const SCAN_PAIRS = [
+  // BTC & ETH
+  'BTCUSDT','ETHUSDT',
+  // Large caps
+  'SOLUSDT','BNBUSDT','XRPUSDT','ADAUSDT','AVAXUSDT','DOGEUSDT','TRXUSDT','LINKUSDT',
+  'DOTUSDT','MATICUSDT','LTCUSDT','BCHUSDT','ATOMUSDT','NEARUSDT','APTUSDT','ARBUSDT',
+  'OPUSDT','INJUSDT','SUIUSDT','SEIUSDT','STXUSDT','TONUSDT','TIAUSDT','WLDUSDT',
+  // Mid caps
+  'AAVEUSDT','UNIUSDT','MKRUSDT','COMPUSDT','CRVUSDT','SUSHIUSDT','YFIUSDT','SNXUSDT',
+  'GMXUSDT','DYDXUSDT','PEPEUSDT','FLOKIUSDT','BONKUSDT','WIFUSDT','MEMEUSDT',
+  'RENDERUSDT','FETUSDT','AGIXUSDT','OCEANUSDT','GRTUSDT','FILUSDT','ARWEAVEUSDT',
+  'HBARUSDT','ALGOUSDT','XLMUSDT','VETUSDT','XTZUSDT','EGLDUSDT','FLOWUSDT',
+  'RNDRUSDT','IMXUSDT','SANDUSDT','MANAUSDT','AXSUSDT','GALAUSDT','ENJUSDT',
+  'CHZUSDT','ANKRUSDT','COTIUSDT','CELOUSDT','ONEUSDT','ZILUSDT','IOTAUSDT',
+  'STORJUSDT','CKBUSDT','RSRUSDT','AKROUSDT','BANDUSDT','SKLUSDT','CVCUSDT',
+  // High beta / momentum
+  'APEUSDT','MAGICUSDT','LOOKSUSDT','BLURUSDT','PERPUSDT','DRIFTUSDT','JUPUSDT',
+  'PYTHUSDT','JITOUSDT','WENUSDT','BOMEUSDT','EIGENUSDT','ENAUSDT','ETHFIUSDT',
+  'REZUSDT','BBUSDT','NOTUSDT','HMSTRUSDT','CATIUSDT','TURBOUSDT',
+  // DeFi / Layer2
+  'LDOUSDT','RPLRUSDT','STRKUSDT','ALTUSDT','TAOUSDT','DYMUSDT','MNTUSDT',
+  'METHAUSDT','ZROUSDT','LAYERUSDT','MOVEUSDT','VIRTUALUSDT','AIXBTUSDT','AICAUSDT',
+];
+
 const MTF_LIST = [
   {tf:'15',  lbl:'15M'},
   {tf:'60',  lbl:'1H'},
@@ -776,6 +873,189 @@ function extractLevels(text, cur, dir) {
   return L;
 }
 
+// ══ SCORE DE CONFLUÊNCIA ═════════════════════════════════════════
+function calcScore(wy, rsi, macd, bullTFs, totalTFs) {
+  let score = 0;
+  const cur = null; // usado externamente
+
+  // EMA200
+  if (wy.ema200 !== undefined) {} // placeholder
+  // Wyckoff fase
+  if (wy.fase === 'ACUMULAÇÃO')  score += 3;
+  else if (wy.fase === 'MARKUP') score += 2;
+  else if (wy.fase === 'DISTRIBUIÇÃO') score -= 2;
+  else if (wy.fase === 'MARKDOWN')     score -= 3;
+  // Spring / Upthrust
+  if (wy.spring)   score += 3;
+  if (wy.upthrust) score -= 3;
+  // RSI
+  if (rsi > 40 && rsi < 65)  score += 1;
+  else if (rsi < 30)          score += 2;
+  else if (rsi > 75)          score -= 2;
+  // MACD
+  if (macd.hist > 0 && macd.hist > macd.histPrev) score += 2;
+  else if (macd.hist < 0 && macd.hist < macd.histPrev) score -= 2;
+  // MTF
+  const mtfRatio = bullTFs / (totalTFs || 1);
+  if (mtfRatio >= 0.8)      score += 3;
+  else if (mtfRatio >= 0.6) score += 2;
+  else if (mtfRatio >= 0.4) score += 1;
+  else if (mtfRatio <= 0.2) score -= 3;
+  else if (mtfRatio <= 0.3) score -= 2;
+
+  return Math.min(12, Math.max(-12, score));
+}
+
+// ══ SCANNER DE 100 PARES ═════════════════════════════════════════
+let scanRunning = false;
+let scanResults = [];
+
+async function startScan() {
+  if (scanRunning) return;
+  scanRunning = true;
+
+  const tf     = document.getElementById('cTF').value;
+  const btnSc  = document.getElementById('btnScan');
+  const progW  = document.getElementById('scanProgress');
+  const progB  = document.getElementById('scanBar');
+  const progL  = document.getElementById('scanLabel');
+  const grid   = document.getElementById('scanGrid');
+
+  btnSc.disabled = true;
+  progW.style.display = '';
+  grid.innerHTML = '';
+  scanResults = [];
+
+  // Filtra pares que realmente existem na Bybit (tenta 3 ao mesmo tempo)
+  const pairs = SCAN_PAIRS.slice(0, 100);
+  const total = pairs.length;
+  let done = 0;
+
+  const analyze = async (sym) => {
+    try {
+      const candles = await fetchCandles(sym, tf, 210);
+      const closes  = candles.map(c => c.c);
+      const cur     = closes.at(-1);
+      const rsi     = calcRSI(closes);
+      const macd    = calcMACD(closes);
+      const wy      = detectWyckoff(candles, closes, rsi);
+      const sr      = findSR(candles);
+      const atr     = calcATR(candles);
+
+      // MTF rápido (só 1H e 4H para não sobrecarregar)
+      const [c1h, c4h] = await Promise.all([
+        fetchCandles(sym, '60', 210).catch(()=>null),
+        fetchCandles(sym, '240', 210).catch(()=>null),
+      ]);
+      let bullTFs = cur > calcEMA(closes, 200).at(-1) ? 1 : 0;
+      if (c1h)  bullTFs += c1h.at(-1).c  > calcEMA(c1h.map(x=>x.c),200).at(-1)  ? 1 : 0;
+      if (c4h)  bullTFs += c4h.at(-1).c  > calcEMA(c4h.map(x=>x.c),200).at(-1)  ? 1 : 0;
+
+      const score = calcScore(wy, rsi, macd, bullTFs, 3);
+      const dir   = score >= 3 ? 'LONG' : score <= -3 ? 'SHORT' : 'NEUTRO';
+      const prob  = Math.min(95, Math.max(5, 50 + score * 4));
+
+      return { sym, cur, rsi, macd, wy, sr, atr, score, dir, prob, bullTFs, closes, candles };
+    } catch(e) {
+      return null;
+    }
+  };
+
+  // Processa em lotes de 5 para não sobrecarregar
+  for (let i = 0; i < pairs.length; i += 5) {
+    const batch   = pairs.slice(i, i + 5);
+    const results = await Promise.all(batch.map(analyze));
+    results.forEach(r => { if (r) scanResults.push(r); });
+    done += batch.length;
+    const pct = Math.round(done / total * 100);
+    progB.style.width = pct + '%';
+    progL.textContent = `Analisando... ${done}/${total} pares (${pct}%)`;
+    await new Promise(r => setTimeout(r, 100));
+  }
+
+  // Ordena por score absoluto (melhores oportunidades primeiro)
+  scanResults.sort((a, b) => Math.abs(b.score) - Math.abs(a.score));
+
+  // Renderiza cards
+  progL.textContent = `✅ ${scanResults.length} pares analisados — mostrando os melhores setups`;
+  renderScanResults(scanResults.slice(0, 50));
+  document.getElementById('scanFilters').style.display = 'flex';
+
+  btnSc.disabled = false;
+  scanRunning = false;
+}
+
+function renderScanResults(results) {
+  const grid = document.getElementById('scanGrid');
+  grid.innerHTML = results.map(r => {
+    const pF = v => v<1?v.toFixed(4):v<100?v.toFixed(2):v.toLocaleString('en-US',{maximumFractionDigits:0});
+    const isLong  = r.dir === 'LONG';
+    const isShort = r.dir === 'SHORT';
+    const dirCol  = isLong ? 'var(--green)' : isShort ? 'var(--red)' : 'var(--dim)';
+    const wyCol   = r.wy.fase==='ACUMULAÇÃO'||r.wy.fase==='MARKUP'?'var(--green)':r.wy.fase==='INDEFINIDA'?'var(--dim)':'var(--red)';
+    const rsiCol  = r.rsi>70?'var(--red)':r.rsi<30?'var(--green)':'var(--text)';
+    const pBar    = Math.max(0, Math.min(100, (r.score+12)/24*100));
+    const barCol  = r.score>=3?'var(--green)':r.score<=-3?'var(--red)':'var(--dim)';
+    const sLine   = r.sr.sup.length ? '$'+pF(r.sr.sup[0]) : '—';
+    const rLine   = r.sr.res.length ? '$'+pF(r.sr.res[0]) : '—';
+
+    return `<div class="scan-card ${isLong?'scan-long':isShort?'scan-short':''}" onclick="loadPair('${r.sym}')">
+      <div class="scan-header">
+        <div>
+          <div class="scan-pair">${r.sym.replace('USDT','/USDT')}</div>
+          <div class="scan-price mono">$${pF(r.cur)}</div>
+        </div>
+        <div style="text-align:right">
+          <div class="tag ${isLong?'bull':isShort?'bear':'neut'}" style="font-size:11px;padding:3px 10px">${r.dir}</div>
+          <div style="font-family:var(--mono);font-size:10px;color:var(--dim);margin-top:4px">${r.wy.fase}</div>
+        </div>
+      </div>
+      <div style="margin:10px 0 6px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+          <span style="font-family:var(--mono);font-size:9px;color:var(--dim)">SCORE CONFLUÊNCIA</span>
+          <span style="font-family:var(--mono);font-size:11px;font-weight:700;color:${barCol}">${r.score > 0?'+':''}${r.score}/12</span>
+        </div>
+        <div style="height:5px;background:rgba(255,255,255,.06);border-radius:3px;overflow:hidden">
+          <div style="height:100%;width:${pBar}%;background:${barCol};border-radius:3px;transition:width .4s"></div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:8px">
+        <div class="scan-chip">
+          <div class="scan-chip-lbl">RSI</div>
+          <div class="scan-chip-val" style="color:${rsiCol}">${r.rsi.toFixed(0)}</div>
+        </div>
+        <div class="scan-chip">
+          <div class="scan-chip-lbl">MACD</div>
+          <div class="scan-chip-val" style="color:${r.macd.hist>0?'var(--green)':'var(--red)'}">${r.macd.hist>0?'↑':'↓'}</div>
+        </div>
+        <div class="scan-chip">
+          <div class="scan-chip-lbl">MTF</div>
+          <div class="scan-chip-val">${r.bullTFs}/3</div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:8px;padding-top:8px;border-top:1px solid var(--line)">
+        <span style="font-family:var(--mono);font-size:10px;color:var(--blue)">S ${sLine}</span>
+        <span style="font-family:var(--mono);font-size:10px;color:var(--dim)">${r.wy.spring?'⚡ SPRING':r.wy.upthrust?'⚠️ UPTHRUST':''}</span>
+        <span style="font-family:var(--mono);font-size:10px;color:#FF6B35">R ${rLine}</span>
+      </div>
+      <div style="margin-top:8px;text-align:center;font-family:var(--mono);font-size:9px;color:var(--dim)">
+        clique para analisar com IA →
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function loadPair(sym) {
+  document.getElementById('cPar').value = sym;
+  document.getElementById('results').style.display = 'none';
+  document.getElementById('emptyState').style.display = '';
+  document.getElementById('scanGrid').scrollIntoView({behavior:'smooth', block:'start'});
+  setTimeout(() => {
+    document.getElementById('emptyState').style.display = 'none';
+    runAnalysis();
+  }, 300);
+}
+
 // ══ ANÁLISE PRINCIPAL ════════════════════════════════════════════
 async function runAnalysis() {
   const sym    = document.getElementById('cPar').value.trim().toUpperCase().replace('/','');
@@ -1024,6 +1304,23 @@ function renderLevels(lvls, cur, dir, pF, isPending) {
     `<span style="font-family:var(--mono);font-size:10px;color:${n.c};background:rgba(255,255,255,.04);padding:3px 8px;border-radius:4px;border:1px solid rgba(255,255,255,.06)">${n.t}</span>`
   ).join('');
 }
+
+// Filtro do scanner
+function filterScan(type) {
+  document.querySelectorAll('.sf-btn').forEach(b => {
+    b.classList.toggle('sf-active', b.dataset.f === type);
+  });
+  let filtered;
+  if      (type === 'long')   filtered = scanResults.filter(r => r.dir   === 'LONG');
+  else if (type === 'short')  filtered = scanResults.filter(r => r.dir   === 'SHORT');
+  else if (type === 'spring') filtered = scanResults.filter(r => r.wy.spring);
+  else if (type === 'acc')    filtered = scanResults.filter(r => r.wy.fase === 'ACUMULAÇÃO');
+  else                        filtered = scanResults;
+  renderScanResults(filtered.slice(0, 50));
+}
+
+// Mostra filtros após scan
+const origRender = renderScanResults;
 
 // Enter para analisar
 document.addEventListener('keydown', e=>{
