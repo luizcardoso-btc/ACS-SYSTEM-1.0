@@ -474,6 +474,9 @@ app.get("/api/bybit/proxy", requireAdmin, async (req, res) => {
 });
 
 // Serve a página de análise Bybit
+
+app.get("/acs-bybit.html", (req, res) => serveFile("acs-bybit.html", res));
+
 app.get("/bybit-analise.html", (req, res) => serveFile("bybit-analise.html", res)); // auth feita via JS interno
 
 // ══════════════════════════════════════════════
