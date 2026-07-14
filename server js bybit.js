@@ -480,10 +480,10 @@ app.get('/acs-scanner-pro.html', (req, res) => serveFile('acs-scanner-pro.html',
 app.get("/acs-bybit.html", (req, res) => serveFile("acs-bybit.html", res));
 
 app.get("/bybit-analise.html", (req, res) => {
-  // Serve acs-bybit.html (versão nova com scanner + login JS)
-  const f = findFile("acs-bybit.html") || findFile("bybit-analise.html");
-  if (!f) return res.status(404).send("Arquivo não encontrado");
-  res.sendFile(f);
+  // Serve sempre o scanner pro mais recente
+  const f = findFile("acs-scanner-pro.html");
+  if (f) return res.sendFile(f);
+  serveFile("bybit-analise.html", res);
 });
 
 // ══════════════════════════════════════════════
