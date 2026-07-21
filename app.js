@@ -53,6 +53,42 @@ function initTheme() {
 initTheme();
 
 // Carrega info de trial ao iniciar app
+
+// ═══════════════════════════════════════════════════════
+// DIAGNÓSTICO — execute window.acsDebug() no console
+// ═══════════════════════════════════════════════════════
+window.acsDebug = async function() {
+  console.group("[ACS DEBUG]");
+  console.log("state.signals:", state.signals);
+  console.log("state.profits:", state.profits);
+
+  // Testa a rota diretamente
+  try {
+    const r = await fetch("/api/signals", { credentials: "include" });
+    console.log("Status /api/signals:", r.status);
+    const d = await r.json();
+    console.log("Resposta:", d);
+    console.log("Total sinais:", (d.signals||d||[]).length);
+    const ativos = (d.signals||d||[]).filter(s => s.status === "active");
+    console.log("Ativos:", ativos.length, ativos);
+  } catch(e) {
+    console.error("Erro fetch:", e);
+  }
+
+  // Testa auth
+  try {
+    const r2 = await fetch("/api/auth/me", { credentials: "include" });
+    console.log("Auth status:", r2.status);
+    const u = await r2.json();
+    console.log("Usuário logado:", u.email, "| Plano:", u.plan);
+  } catch(e) {
+    console.error("Erro auth:", e);
+  }
+
+  console.groupEnd();
+};
+console.log("[ACS] Debug disponível: window.acsDebug()");
+
 document.addEventListener("DOMContentLoaded", () => {
   loadTrialInfo();
 });
@@ -536,45 +572,55 @@ function updateTicker() {
 // ══════════════════════════════════════════════
 async function loadServerSignals() {
   try {
-    const res = await fetch("/api/signals");
-    if (!res.ok) return;
+    const res = await fetch("/api/signals", { credentials: "include" });
+
+    // Sessão expirada — redireciona para login
+    if (res.status === 401) {
+      console.warn("[ACS] Sessão expirada, redirecionando...");
+      window.location.href = "/login.html";
+      return;
+    }
+    if (!res.ok) {
+      console.warn("[ACS] /api/signals retornou:", res.status);
+      return;
+    }
+
     const data = await res.json();
 
-    // Suporta tanto formato antigo (array) quanto novo ({signals, meta})
-    const all = Array.isArray(data)
-      ? data
-      : (data.signals || []);
+    // Suporta formato antigo (array) e novo ({signals, meta})
+    const all = Array.isArray(data) ? data : (data.signals || []);
 
-    // Separa: ativos (aparecem em Alertas), lucros/loss (aparecem em Histórico)
+    console.log(`[ACS] API retornou ${all.length} sinais total`);
+
+    // Ativos → Alertas
     state.signals = all
       .filter(s => s.status === "active")
-      .map(s => ({
-        ...s,
-        isManual: s.source === "admin",
-      }));
+      .map(s => ({ ...s, isManual: s.source === "admin" }));
 
+    // Fechados → Histórico
     state.profits = all
-      .filter(s => s.status === "profit" || s.status === "loss" || s.status === "closed")
+      .filter(s => ["profit","loss","closed"].includes(s.status))
       .map(s => ({
         ...s,
         profitPct: s.profit_pct
-          || (s.result_pct ? (parseFloat(s.result_pct)>=0?"+":"")+parseFloat(s.result_pct).toFixed(1)+"%" : null)
-          || (s.hit>0&&s.targets?.[s.hit-1] ? "+"+s.targets[s.hit-1] : null)
-          || (s.status==="loss" ? "STOP" : "+?"),
+          || (s.result_pct
+              ? (parseFloat(s.result_pct) >= 0 ? "+" : "") + parseFloat(s.result_pct).toFixed(1) + "%"
+              : null)
+          || (s.hit > 0 && s.targets?.[s.hit-1] ? "+" + s.targets[s.hit-1] : null)
+          || (s.status === "loss" ? "STOP" : "+?"),
         timeToHit: s.time_to_hit || "—",
       }));
 
-    // Guarda todos para histórico completo
     state.closed = all.filter(s => s.status === "closed");
 
+    console.log(`[ACS] Ativos: ${state.signals.length} | Fechados: ${state.profits.length}`);
+
     updateStats();
-    // Renderiza sempre — independente da aba atual
     renderAlerts();
     if (state.currentTab === "sinais") renderSinais();
-    // Log de debug
-    console.log(`[ACS] Sinais carregados: ${state.signals.length} ativos, ${state.profits.length} fechados`);
+
   } catch (err) {
-    console.warn("[ACS] Erro ao carregar sinais:", err.message);
+    console.error("[ACS] Erro loadServerSignals:", err.message);
   }
 }
 
@@ -628,9 +674,12 @@ function renderAlerts() {
   if (items.length === 0 && !state.scanning) {
     feed.innerHTML = `
       <div class="empty-state">
-        <div class="empty-icon">⚡</div>
+        <div class="empty-icon">📡</div>
         <div class="empty-title">AGUARDANDO SINAIS</div>
-        <button class="primary-btn" onclick="generateSignals()">GERAR SINAIS IA AGORA</button>
+        <div class="empty-sub" style="font-family:var(--font-mono);font-size:11px;color:var(--text4);margin-bottom:12px">
+          Sinais publicados pelo admin aparecerão aqui automaticamente
+        </div>
+        <button class="primary-btn" onclick="loadServerSignals()">🔄 Verificar sinais</button>
       </div>`;
     return;
   }
@@ -1686,13 +1735,23 @@ function renderComunidadeFeed() {
 
 function switchTab(tabId) {
   state.currentTab = tabId;
-  if (tabId === "historico")  setTimeout(loadHistorico,  50);
-  if (tabId === "comunidade") setTimeout(loadComunidade, 50);
-  if (tabId === "planos")     setTimeout(renderPlanos,   50);
-  if (tabId === "mercado")    setTimeout(initMercado,    80);
+
+  // Mostra/esconde painéis — remove style inline para CSS funcionar
+  document.querySelectorAll(".panel").forEach(p => {
+    const isActive = p.id === "panel-" + tabId;
+    p.style.display = isActive ? "block" : "none";
+    p.classList.toggle("active", isActive);
+  });
+
   document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", b.dataset.tab===tabId));
   document.querySelectorAll(".nav-btn").forEach(b => b.classList.toggle("active", b.dataset.tab===tabId));
-  document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id===`panel-${tabId}`));
+
+  if (tabId === "historico")  setTimeout(loadHistorico,  50);
+  if (tabId === "comunidade") setTimeout(loadComunidade, 50);
+  if (tabId === "planos")     { setTimeout(renderPlanos, 50); }
+  if (tabId === "mercado")    setTimeout(initMercado,    80);
+  if (tabId === "alerts")     { renderAlerts(); loadServerSignals(); }
+  if (tabId === "sinais")     renderSinais();
   if (tabId==="mercado" && !state.marketData && !state.marketLoading) loadMarketData();
 }
 
@@ -1703,6 +1762,42 @@ function setFilter(f) {
 }
 
 // ── BOOT ──────────────────────────────────────────────────────────────────────
+
+// ═══════════════════════════════════════════════════════
+// DIAGNÓSTICO — execute window.acsDebug() no console
+// ═══════════════════════════════════════════════════════
+window.acsDebug = async function() {
+  console.group("[ACS DEBUG]");
+  console.log("state.signals:", state.signals);
+  console.log("state.profits:", state.profits);
+
+  // Testa a rota diretamente
+  try {
+    const r = await fetch("/api/signals", { credentials: "include" });
+    console.log("Status /api/signals:", r.status);
+    const d = await r.json();
+    console.log("Resposta:", d);
+    console.log("Total sinais:", (d.signals||d||[]).length);
+    const ativos = (d.signals||d||[]).filter(s => s.status === "active");
+    console.log("Ativos:", ativos.length, ativos);
+  } catch(e) {
+    console.error("Erro fetch:", e);
+  }
+
+  // Testa auth
+  try {
+    const r2 = await fetch("/api/auth/me", { credentials: "include" });
+    console.log("Auth status:", r2.status);
+    const u = await r2.json();
+    console.log("Usuário logado:", u.email, "| Plano:", u.plan);
+  } catch(e) {
+    console.error("Erro auth:", e);
+  }
+
+  console.groupEnd();
+};
+console.log("[ACS] Debug disponível: window.acsDebug()");
+
 document.addEventListener("DOMContentLoaded", async () => {
   renderEducation();
   updateStats();
@@ -1736,12 +1831,24 @@ document.addEventListener("DOMContentLoaded", async () => {
   const hasServerSignals = state.signals.length > 0 || state.profits.length > 0;
   if (!hasServerSignals) generateSignals();
 
+  // Garante que painel de alertas está visível no boot
+  document.querySelectorAll(".panel").forEach(p => {
+    p.style.display = p.id === "panel-alerts" ? "block" : "none";
+  });
+
   // Timers
   rotateTicker();
   setInterval(rotateTicker, 3000);
   setInterval(async ()=>{ await loadPrices(); }, 30_000);
-  // Polling de sinais a cada 30s — sinais admin aparecem rapidamente
-  setInterval(async ()=>{ await loadServerSignals(); }, 30_000);
+  // Polling inteligente: 15s quando em Alertas, 30s nas outras abas
+  setInterval(async () => {
+    await loadServerSignals();
+  }, state.currentTab === "alerts" ? 15_000 : 30_000);
+
+  // Polling fixo de 15s para não perder sinais novos
+  setInterval(async () => {
+    if (state.currentTab === "alerts") await loadServerSignals();
+  }, 15_000);
   setInterval(() => {
     state.countdown--;
     if (state.countdown <= 0) {
