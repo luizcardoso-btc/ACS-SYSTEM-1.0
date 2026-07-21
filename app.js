@@ -568,10 +568,13 @@ async function loadServerSignals() {
     state.closed = all.filter(s => s.status === "closed");
 
     updateStats();
-    if (state.currentTab === "alerts") renderAlerts();
+    // Renderiza sempre — independente da aba atual
+    renderAlerts();
     if (state.currentTab === "sinais") renderSinais();
+    // Log de debug
+    console.log(`[ACS] Sinais carregados: ${state.signals.length} ativos, ${state.profits.length} fechados`);
   } catch (err) {
-    console.warn("Erro ao carregar sinais:", err.message);
+    console.warn("[ACS] Erro ao carregar sinais:", err.message);
   }
 }
 
@@ -956,7 +959,11 @@ Gere sinais com base nesses preços reais. Diversifique os pares e inclua altcoi
     const parsed = parseJSON(raw);
 
     if (parsed?.signals && Array.isArray(parsed.signals)) {
-      const manuals = state.signals.filter(s => s.source==="admin" && s.status==="active");
+      // Preserva TODOS os sinais admin ativos (nunca sobrescreve)
+      const adminSignals = state.signals.filter(s => s.source === "admin" && s.status === "active");
+      
+      // Se já há sinais admin, IA apenas complementa (não substitui)
+      // Se não há sinais admin, IA preenche a lista
       const newAI = parsed.signals.map((s, i) => ({
         ...s,
         id: -(Date.now() + i),  // IDs negativos = temporários IA (não persistidos)
@@ -966,7 +973,11 @@ Gere sinais com base nesses preços reais. Diversifique os pares e inclua altcoi
         created_at: new Date().toISOString(),
         source: "ai",
       }));
-      state.signals = [...manuals, ...newAI];
+      
+      // Admin sempre tem prioridade e aparece primeiro
+      state.signals = adminSignals.length > 0
+        ? [...adminSignals, ...newAI]  // admin na frente + IA complementa
+        : newAI;                        // só IA se não há admin
 
       // Update market mini-bar
       if (parsed.marketBias) {
@@ -1718,19 +1729,30 @@ document.addEventListener("DOMContentLoaded", async () => {
   // ── SEQUÊNCIA DE BOOT ──────────────────────────────────────────────────────
   // 1) Carrega preços reais
   await loadPrices();
-  // 2) Carrega sinais do servidor (admin/persistidos)
+  // 2) Carrega sinais do servidor — SINAIS ADMIN TÊM PRIORIDADE ABSOLUTA
   await loadServerSignals();
-  // 3) Se não há sinais do servidor, gera via IA
-  if (state.signals.length === 0) generateSignals();
+  // 3) Só gera IA se não há NENHUM sinal do servidor (nem ativo, nem fechado)
+  // Sinais admin nunca são sobrescritos por IA
+  const hasServerSignals = state.signals.length > 0 || state.profits.length > 0;
+  if (!hasServerSignals) generateSignals();
 
   // Timers
   rotateTicker();
   setInterval(rotateTicker, 3000);
   setInterval(async ()=>{ await loadPrices(); }, 30_000);
-  setInterval(async ()=>{ await loadServerSignals(); }, 60_000);
+  // Polling de sinais a cada 30s — sinais admin aparecem rapidamente
+  setInterval(async ()=>{ await loadServerSignals(); }, 30_000);
   setInterval(() => {
     state.countdown--;
-    if (state.countdown <= 0) { state.countdown = 900; generateSignals(); }
+    if (state.countdown <= 0) {
+      state.countdown = 900;
+      // Recarrega do servidor primeiro; só gera IA se não houver sinais admin
+      loadServerSignals().then(() => {
+        if (state.signals.filter(s => s.source === "admin").length === 0) {
+          generateSignals();
+        }
+      });
+    }
     updateCountdown();
   }, 1000);
 });
