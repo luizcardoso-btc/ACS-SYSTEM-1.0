@@ -222,24 +222,127 @@
 
     <!-- ══ BOTTOM NAV ══ -->
     <nav class="bottom-nav">
-      <button class="nav-btn active" data-tab="alerts">
-        <span class="nav-icon">🔔</span>
-        <span class="nav-label">Alertas</span>
-        <span class="nav-badge" id="navBadge" style="display:none">0</span>
-      </button>
-      <button class="nav-btn" data-tab="mercado">
-        <span class="nav-icon">📊</span>
-        <span class="nav-label">Mercado</span>
-      </button>
-      <button class="nav-btn" data-tab="sinais">
-        <span class="nav-icon">📋</span>
-        <span class="nav-label">Sinais</span>
-      </button>
-      <button class="nav-btn" data-tab="edu">
-        <span class="nav-icon">🎓</span>
-        <span class="nav-label">Edu</span>
-      </button>
+     <button class="tab-btn active" data-tab="alerts">🔔 Alertas</button>
+<button class="tab-btn" data-tab="mercado">📊 Mercado</button>
+<button class="tab-btn" data-tab="sinais">📋 Sinais</button>
+<button class="tab-btn" data-tab="historico">📈 Histórico</button>
+<button class="tab-btn" data-tab="comunidade">📸 Comunidade</button>
+<button class="tab-btn" data-tab="planos">⭐ Planos</button>
+<button class="tab-btn" data-tab="edu">🎓 Edu</button>
     </nav>
+<!-- PAINEL PLANOS -->
+<section class="panel" id="panel-planos" style="display:none">
+  <div class="planos-wrap">
+
+    <div class="planos-header">
+      <div class="planos-trial-badge" id="planoTrialBadge"></div>
+      <h2 class="planos-title">Escolha seu plano</h2>
+      <p class="planos-sub">Acesso completo ao ACS System com sinais ilimitados, scanner e análise IA</p>
+    </div>
+
+    <div class="planos-grid">
+
+      <!-- PRO -->
+      <div class="plano-card">
+        <div class="plano-tag">PRO</div>
+        <div class="plano-period">Acesso Semestral</div>
+        <div class="plano-desc">Ideal para quem quer começar com consistência e testar a plataforma por 6 meses completos.</div>
+        <ul class="plano-features">
+          <li>✓ Sinais ilimitados por dia</li>
+          <li>✓ Scanner de 200+ pares</li>
+          <li>✓ Análise IA completa</li>
+          <li>✓ Academia com 8 aulas</li>
+          <li>✓ Suporte via WhatsApp</li>
+          <li>✓ Comunidade exclusiva</li>
+        </ul>
+        <a href="https://chk.eduzz.com/Q9N2NOVB01" target="_blank" class="plano-btn plano-btn-pro">
+          Assinar Plano Pro →
+        </a>
+        <div class="plano-guarantee">🔒 Garantia de 7 dias</div>
+      </div>
+
+      <!-- PREMIUM -->
+      <div class="plano-card plano-featured">
+        <div class="plano-badge-top">MAIS ESCOLHIDO</div>
+        <div class="plano-tag featured">PREMIUM</div>
+        <div class="plano-period">Acesso Anual</div>
+        <div class="plano-desc">Para traders sérios. 12 meses de acesso com bônus exclusivos e prioridade total nos sinais.</div>
+        <ul class="plano-features">
+          <li>✓ Tudo do plano Pro</li>
+          <li>✓ <strong>12 meses garantidos</strong></li>
+          <li>✓ <strong>Bônus: Guia de gestão de risco</strong></li>
+          <li>✓ <strong>Bônus: Planilha de banca</strong></li>
+          <li>✓ <strong>Prioridade nos sinais</strong></li>
+          <li>✓ Suporte prioritário</li>
+        </ul>
+        <a href="https://chk.eduzz.com/1488759" target="_blank" class="plano-btn plano-btn-premium">
+          Assinar Plano Premium →
+        </a>
+        <div class="plano-guarantee">🔒 Garantia de 7 dias</div>
+      </div>
+
+    </div>
+
+    <div class="planos-footer">
+      Dúvidas? Fale no <strong>WhatsApp</strong> ou acesse a <strong>Central de Ajuda</strong>
+    </div>
+
+  </div>
+</section>
+
+<!-- PAINEL COMUNIDADE -->
+<section class="panel" id="panel-comunidade" style="display:none">
+  <div class="comunidade-wrap">
+
+    <!-- Botão postar -->
+    <div class="com-post-btn-wrap">
+      <button class="com-post-btn" onclick="abrirNovoPost()">📷 Compartilhar resultado</button>
+      <div style="font-size:11px;color:var(--text3);margin-top:6px;font-family:var(--font-mono)">Posts são revisados pelo admin antes de aparecer</div>
+    </div>
+
+    <!-- Form de novo post (oculto) -->
+    <div class="com-form-wrap" id="comForm" style="display:none">
+      <div class="com-form-title">📷 Novo post</div>
+      <div class="com-form-group">
+        <label class="com-label">Legenda (opcional)</label>
+        <textarea class="com-textarea" id="comCaption" placeholder="Descreva seu resultado..." maxlength="200"></textarea>
+      </div>
+      <div class="com-form-group">
+        <label class="com-label">Imagem</label>
+        <div class="com-upload-area" onclick="document.getElementById('comFile').click()">
+          <input type="file" id="comFile" accept="image/*" style="display:none" onchange="previewImagem(this)"/>
+          <div id="comPreview">
+            <div style="font-size:28px">📷</div>
+            <div style="font-size:12px;margin-top:6px">Toque para selecionar imagem</div>
+          </div>
+        </div>
+      </div>
+      <div class="com-form-actions">
+        <button class="com-cancel-btn" onclick="fecharNovoPost()">Cancelar</button>
+        <button class="com-submit-btn" onclick="enviarPost()" id="comSubmitBtn">Enviar para aprovação</button>
+      </div>
+    </div>
+
+    <!-- Feed de posts -->
+    <div id="comunidadeFeed">
+      <div class="empty-state">
+        <div class="empty-icon">📸</div>
+        <div class="empty-title">Nenhum post ainda</div>
+        <div class="empty-sub">Seja o primeiro a compartilhar seu resultado!</div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<button class="nav-btn" data-tab="comunidade">
+  <span class="nav-icon">📸</span>
+  <span class="nav-label">Comunidade</span>
+</button>
+<button class="nav-btn" data-tab="planos">
+  <span class="nav-icon">⭐</span>
+  <span class="nav-label">Planos</span>
+</button>
 
     <!-- ══ CHAT BUTTON ══ -->
     <button class="chat-fab" id="chatFab" title="ACS AI">🤖</button>
