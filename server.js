@@ -18,6 +18,73 @@ const PORT = process.env.PORT || 3000;
 const API_KEY   = process.env.ANTHROPIC_API_KEY;
 const ADMIN_KEY = process.env.ADMIN_KEY;
 
+// ══════════════════════════════════════════════════════════════════
+// SESSÕES PERSISTIDAS — substitui Map em memória do auth.js
+// Garante que sessões sobrevivem a redeploys do Railway
+// ══════════════════════════════════════════════════════════════════
+const crypto  = require("crypto");
+const SESSION_COOKIE = "acs_session";
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 dias
+
+function createSessionPersisted(userId) {
+  const id      = crypto.randomBytes(32).toString("hex");
+  const expires = new Date(Date.now() + SESSION_TTL_MS).toISOString();
+  db.sessions.create(id, userId, expires);
+  return { id, expires };
+}
+
+function getSessionPersisted(sessionId) {
+  if (!sessionId) return null;
+  const session = db.sessions.find(sessionId);
+  if (!session) return null;
+  return db.users.findById(session.user_id) || null;
+}
+
+function destroySessionPersisted(sessionId) {
+  if (sessionId) db.sessions.destroy(sessionId);
+}
+
+function setSessionCookiePersisted(res, sessionId) {
+  res.setHeader("Set-Cookie",
+    `${SESSION_COOKIE}=${sessionId}; HttpOnly; Path=/; Max-Age=${SESSION_TTL_MS/1000}; SameSite=Lax`
+  );
+}
+
+function clearSessionCookiePersisted(res) {
+  res.setHeader("Set-Cookie",
+    `${SESSION_COOKIE}=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax`
+  );
+}
+
+function parseCookiesPersisted(req) {
+  const raw = req.headers.cookie || "";
+  return Object.fromEntries(raw.split(";").map(c => {
+    const [k, ...v] = c.trim().split("=");
+    return [k?.trim(), v.join("=")?.trim()];
+  }).filter(([k]) => k));
+}
+
+function requireAuthPersisted(req, res, next) {
+  const cookies = parseCookiesPersisted(req);
+  const user    = getSessionPersisted(cookies[SESSION_COOKIE]);
+  if (!user || user.status !== "active")
+    return res.status(401).json({ error:"not_authenticated", message:"Faça login para continuar." });
+  res.locals.user = user;
+  req.user        = user;
+  next();
+}
+
+function requirePageAuthPersisted(req, res, next) {
+  const cookies = parseCookiesPersisted(req);
+  const user    = getSessionPersisted(cookies[SESSION_COOKIE]);
+  if (!user || user.status !== "active")
+    return res.redirect("/login.html");
+  res.locals.user = user;
+  req.user        = user;
+  next();
+}
+
+
 // ══════════════════════════════════════════════
 // ONESIGNAL — Push Notifications
 // ══════════════════════════════════════════════
@@ -202,7 +269,7 @@ setInterval(checkSignalTargets, 30_000);
 // ══════════════════════════════════════════════
 // API PÚBLICA: Preços em tempo real
 // ══════════════════════════════════════════════
-app.get("/api/prices", auth.requireAuth, async (req, res) => {
+app.get("/api/prices", requireAuthPersisted, async (req, res) => {
   const prices = await fetchPrices();
   if (!prices) return res.status(503).json({ error: "prices_unavailable", message: "CoinGecko indisponível. Tente em instantes." });
   res.json({ prices, fetchedAt: new Date(priceCache.fetchedAt).toISOString() });
@@ -211,7 +278,7 @@ app.get("/api/prices", auth.requireAuth, async (req, res) => {
 // ══════════════════════════════════════════════
 // API: Sinais (leitura — para usuários logados)
 // ══════════════════════════════════════════════
-app.get("/api/signals", auth.requireAuth, (req, res) => {
+app.get("/api/signals", requireAuthPersisted, (req, res) => {
   const user       = res.locals.user;
   const trial      = db.users.getTrialInfo(user);
   const allSignals = db.signals.all();
@@ -249,7 +316,7 @@ app.get("/api/signals", auth.requireAuth, (req, res) => {
 // Retorna todos os sinais fechados (profit/loss/closed) do servidor
 // sem limite de trial, pois são dados públicos do grupo
 // ══════════════════════════════════════════════════════════════════
-app.get("/api/signals/history", auth.requireAuth, (req, res) => {
+app.get("/api/signals/history", requireAuthPersisted, (req, res) => {
   const all = db.signals.all();
 
   // Todos os sinais encerrados — sem limite de trial
@@ -297,6 +364,22 @@ app.post("/webhook/eduzz", eduzz.webhookHandler);
 // ══════════════════════════════════════════════
 // AUTH
 // ══════════════════════════════════════════════
+// ── ROTA DE DIAGNÓSTICO (remove depois de resolver) ──────────────────────────
+app.get("/api/debug/signals", (req, res) => {
+  const all     = db.signals.all();
+  const active  = all.filter(s => s.status === "active");
+  const users   = db.users.all().map(u => ({ id:u.id, email:u.email, plan:u.plan, trial_ends_at:u.trial_ends_at }));
+  const sessions = db.sessions ? db.sessions.cleanExpired?.() : "N/A";
+  res.json({
+    signals:  { total: all.length, active: active.length, activeList: active.map(s=>({id:s.id,pair:s.pair,status:s.status,source:s.source})) },
+    users:    { total: users.length, list: users },
+    dbPath:   process.env.DB_PATH || "local",
+    node:     process.version,
+    uptime:   Math.floor(process.uptime()) + "s",
+  });
+});
+
+
 app.post("/api/auth/login", (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password)
@@ -314,27 +397,27 @@ app.post("/api/auth/login", (req, res) => {
     return res.status(403).json({ error:"subscription_expired", message:"Sua assinatura expirou." });
   }
 
-  const session = auth.createSession(user.id);
-  auth.setSessionCookie(res, session.id);
+  const session = createSessionPersisted(user.id);
+  setSessionCookiePersisted(res, session.id);
   res.json({ ok:true, user:{ email:user.email, name:user.name, plan:user.plan } });
 });
 
 app.post("/api/auth/logout", (req, res) => {
-  const cookies = auth.parseCookies(req);
-  if (cookies[auth.COOKIE_NAME]) auth.destroySession(cookies[auth.COOKIE_NAME]);
-  auth.clearSessionCookie(res);
+  const cookies = parseCookiesPersisted(req);
+  if (cookies[SESSION_COOKIE]) destroySessionPersisted(cookies[SESSION_COOKIE]);
+  clearSessionCookiePersisted(res);
   res.json({ ok:true });
 });
 
 app.get("/api/auth/me", (req, res) => {
-  const cookies = auth.parseCookies(req);
-  const user = auth.getSession(cookies[auth.COOKIE_NAME]);
+  const cookies = parseCookiesPersisted(req);
+  const user    = getSessionPersisted(cookies[SESSION_COOKIE]);
   if (!user || user.status !== "active")
     return res.status(401).json({ error:"not_authenticated" });
-  res.json({ email:user.email, name:user.name, plan:user.plan, expires_at:user.expires_at });
+  res.json(sanitizeUser(user));
 });
 
-app.post("/api/auth/change-password", auth.requireAuth, (req, res) => {
+app.post("/api/auth/change-password", requireAuthPersisted, (req, res) => {
   const { newPassword } = req.body || {};
   if (!newPassword || newPassword.length < 6)
     return res.status(400).json({ error:"weak_password", message:"Senha precisa de ao menos 6 caracteres." });
@@ -406,7 +489,7 @@ app.get("/api/plans", (req, res) => {
 });
 
 // Status do trial do usuário logado
-app.get("/api/trial/status", auth.requireAuth, (req, res) => {
+app.get("/api/trial/status", requireAuthPersisted, (req, res) => {
   res.json(db.users.getTrialInfo(res.locals.user));
 });
 
@@ -621,12 +704,12 @@ app.get('/acs-scanner-pro.html', (req, res) => serveFile('acs-scanner-pro.html',
 // ══════════════════════════════════════════════════════════
 
 // Lista posts aprovados (usuário autenticado)
-app.get("/api/community/posts", auth.requireAuth, (req, res) => {
+app.get("/api/community/posts", requireAuthPersisted, (req, res) => {
   res.json({ posts: db.communityPosts.approved() });
 });
 
 // Envia novo post — vai para fila de aprovação
-app.post("/api/community/posts", auth.requireAuth, (req, res) => {
+app.post("/api/community/posts", requireAuthPersisted, (req, res) => {
   const user    = res.locals.user;
   const { image, caption } = req.body || {};
   if (!image)
@@ -680,7 +763,7 @@ app.get("/bybit-analise.html", (req, res) => {
 // ══════════════════════════════════════════════
 // PROXY CLAUDE (protegido por sessão)
 // ══════════════════════════════════════════════
-app.post("/api/claude", auth.requireAuth, async (req, res) => {
+app.post("/api/claude", requireAuthPersisted, async (req, res) => {
   try {
     const { system, messages, max_tokens } = req.body;
     const response = await fetch("https://api.anthropic.com/v1/messages", {
@@ -749,9 +832,9 @@ app.get("/OneSignalSDKWorker.js", (req, res) => {
   res.sendFile(filePath);
 });
 app.get("/admin.html",   (req, res) => serveFile("admin.html", res));
-app.get(["/","/index.html"], auth.requirePageAuth, (req, res) => serveFile("index.html", res));
-app.get("/app.js",       auth.requirePageAuth, (req, res) => serveFile("app.js", res));
-app.get("/style.css",    auth.requirePageAuth, (req, res) => serveFile("style.css", res));
+app.get(["/","/index.html"], requirePageAuthPersisted, (req, res) => serveFile("index.html", res));
+app.get("/app.js",       requirePageAuthPersisted, (req, res) => serveFile("app.js", res));
+app.get("/style.css",    requirePageAuthPersisted, (req, res) => serveFile("style.css", res));
 app.get("/login.css",    (req, res) => serveFile("login.css", res));
 app.get("/login.js",     (req, res) => serveFile("login.js", res));
 
