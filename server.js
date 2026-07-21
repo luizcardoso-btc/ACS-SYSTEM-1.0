@@ -237,6 +237,51 @@ app.get("/api/signals", auth.requireAuth, (req, res) => {
   });
 });
 
+// ══════════════════════════════════════════════════════════════════
+// HISTÓRICO DE SINAIS — acessível por qualquer usuário autenticado
+// Retorna todos os sinais fechados (profit/loss/closed) do servidor
+// sem limite de trial, pois são dados públicos do grupo
+// ══════════════════════════════════════════════════════════════════
+app.get("/api/signals/history", auth.requireAuth, (req, res) => {
+  const all = db.signals.all();
+
+  // Todos os sinais encerrados — sem limite de trial
+  const closed = all
+    .filter(s => ["profit", "loss", "closed"].includes(s.status))
+    .sort((a, b) => new Date(b.closed_at || b.updated_at || b.created_at)
+                  - new Date(a.closed_at || a.updated_at || a.created_at));
+
+  // Métricas do mês atual
+  const now      = new Date();
+  const thisMonth = closed.filter(s => {
+    const d = new Date(s.closed_at || s.updated_at || s.created_at);
+    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+  });
+  const profits   = thisMonth.filter(s => s.status === "profit");
+  const losses    = thisMonth.filter(s => s.status === "loss");
+  const pcts      = profits.map(s => parseFloat(s.result_pct || (s.profit_pct||"").replace(/[^0-9.-]/g,"")) || 0).filter(v => v > 0);
+  const lucroMes  = pcts.length ? pcts.reduce((a,b) => a+b, 0) : 0;
+  const winRate   = (profits.length + losses.length) > 0
+    ? Math.round(profits.length / (profits.length + losses.length) * 100)
+    : null;
+
+  res.json({
+    signals:   closed,
+    thisMonth: thisMonth,
+    metrics: {
+      total:      closed.length,
+      thisMonth:  thisMonth.length,
+      wins:       profits.length,
+      losses:     losses.length,
+      winRate,
+      lucroMes:   lucroMes.toFixed(1),
+      maiorLucro: pcts.length ? Math.max(...pcts).toFixed(1) : null,
+    },
+  });
+});
+
+
+
 // ══════════════════════════════════════════════
 // WEBHOOK Eduzz
 // ══════════════════════════════════════════════
