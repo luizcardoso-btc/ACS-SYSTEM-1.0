@@ -539,19 +539,33 @@ async function loadServerSignals() {
     const res = await fetch("/api/signals");
     if (!res.ok) return;
     const data = await res.json();
-    const all = data.signals || [];
 
-    // Separa ativos e lucros
-    state.signals = all.filter(s => s.status === "active").map(s => ({
-      ...s,
-      isManual: s.source === "admin",
-      stoploss: s.stoploss,
-    }));
-    state.profits = all.filter(s => s.status === "profit").map(s => ({
-      ...s,
-      profitPct: s.profit_pct || (s.result_pct ? "+"+s.result_pct+"%" : null) || "+?",
-      timeToHit:  s.time_to_hit || "—",
-    }));
+    // Suporta tanto formato antigo (array) quanto novo ({signals, meta})
+    const all = Array.isArray(data)
+      ? data
+      : (data.signals || []);
+
+    // Separa: ativos (aparecem em Alertas), lucros/loss (aparecem em Histórico)
+    state.signals = all
+      .filter(s => s.status === "active")
+      .map(s => ({
+        ...s,
+        isManual: s.source === "admin",
+      }));
+
+    state.profits = all
+      .filter(s => s.status === "profit" || s.status === "loss" || s.status === "closed")
+      .map(s => ({
+        ...s,
+        profitPct: s.profit_pct
+          || (s.result_pct ? (parseFloat(s.result_pct)>=0?"+":"")+parseFloat(s.result_pct).toFixed(1)+"%" : null)
+          || (s.hit>0&&s.targets?.[s.hit-1] ? "+"+s.targets[s.hit-1] : null)
+          || (s.status==="loss" ? "STOP" : "+?"),
+        timeToHit: s.time_to_hit || "—",
+      }));
+
+    // Guarda todos para histórico completo
+    state.closed = all.filter(s => s.status === "closed");
 
     updateStats();
     if (state.currentTab === "alerts") renderAlerts();
