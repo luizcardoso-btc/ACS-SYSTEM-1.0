@@ -212,24 +212,31 @@ app.get("/api/prices", auth.requireAuth, async (req, res) => {
 // API: Sinais (leitura — para usuários logados)
 // ══════════════════════════════════════════════
 app.get("/api/signals", auth.requireAuth, (req, res) => {
-  const user      = res.locals.user;
-  const trial     = db.users.getTrialInfo(user);
+  const user       = res.locals.user;
+  const trial      = db.users.getTrialInfo(user);
   const allSignals = db.signals.all();
 
-  // Aplica limite de trial no backend — fonte única da verdade
-  let signals     = allSignals;
-  let limitApplied = false;
+  // Sinais ativos — NUNCA limitados por trial (usuário precisa ver os sinais abertos)
+  const activeSignals = allSignals.filter(s => s.status === "active");
+
+  // Sinais fechados — limitados para trial expirado
+  let closedSignals  = allSignals.filter(s => s.status !== "active");
+  let limitApplied   = false;
 
   if (trial.isExpired && trial.signalLimit !== null) {
-    // Usuários com trial expirado veem apenas os N mais recentes
-    signals      = allSignals.slice(0, trial.signalLimit);
-    limitApplied = true;
+    // Trial expirado: limita apenas os sinais fechados visíveis
+    // Os sinais ATIVOS sempre aparecem (são o coração do produto)
+    closedSignals = closedSignals.slice(0, trial.signalLimit);
+    limitApplied  = true;
   }
+
+  const signals = [...activeSignals, ...closedSignals];
 
   res.json({
     signals,
     meta: {
       total:        allSignals.length,
+      totalActive:  activeSignals.length,
       shown:        signals.length,
       limitApplied,
       trial,
