@@ -155,7 +155,6 @@
         <button class="tab-btn active" data-tab="alerts">🔔 Alertas</button>
         <button class="tab-btn" data-tab="mercado">📊 Mercado</button>
         <button class="tab-btn" data-tab="sinais">📋 Sinais</button>
-        <button class="tab-btn" data-tab="historico">📈 Histórico</button>
         <button class="tab-btn" data-tab="comunidade">📸 Comunidade</button>
         <button class="tab-btn" data-tab="planos">⭐ Planos</button>
         <button class="tab-btn" data-tab="edu">🎓 Edu</button>
@@ -176,13 +175,28 @@
 
       <!-- ── MERCADO ── -->
       <section class="panel" id="panel-mercado">
-        <div id="mercadoContent">
-          <div class="empty-state">
-            <div class="empty-icon">📊</div>
-            <div class="empty-title">Carregando dados de mercado...</div>
-            <button class="primary-btn" id="btnLoadMarket">CARREGAR DADOS</button>
+        <!-- Widget TradingView BTC tempo real -->
+        <div class="tv-widget-wrap">
+          <div class="tv-widget-label">BTC/USDT · Tempo Real</div>
+          <div class="tradingview-widget-container" id="tvWidget">
+            <div class="tradingview-widget-container__widget"></div>
           </div>
         </div>
+        <!-- Dados reais de mercado -->
+        <div id="mktStatsRow" class="mkt-stats-row">
+          <div class="mkt-stat-box"><div class="mkt-stat-lbl">MARKET CAP</div><div class="mkt-stat-val" id="mktCap">—</div></div>
+          <div class="mkt-stat-box"><div class="mkt-stat-lbl">VOLUME 24H</div><div class="mkt-stat-val" id="mktVol">—</div></div>
+          <div class="mkt-stat-box"><div class="mkt-stat-lbl">BTC DOM.</div><div class="mkt-stat-val" id="mktBtcDom">—</div></div>
+          <div class="mkt-stat-box">
+            <div class="mkt-stat-lbl">LONG / SHORT</div>
+            <div class="mkt-stat-val" id="mktLongShort">—</div>
+            <div class="mkt-long-short-bar" id="mktLSBar">
+              <div class="mkt-long-fill" id="mktLongFill" style="width:50%"></div>
+            </div>
+          </div>
+        </div>
+        <!-- Restante do conteúdo de mercado -->
+        <div id="mercadoContent"></div>
       </section>
 
       <!-- ── SINAIS ── -->
@@ -191,7 +205,43 @@
           <button class="filter-btn active" data-filter="TODOS">TODOS</button>
           <button class="filter-btn" data-filter="LONG">LONG</button>
           <button class="filter-btn" data-filter="SHORT">SHORT</button>
-          <button class="filter-btn" data-filter="HISTORICO">HISTÓRICO</button>
+          <button class="filter-btn" data-filter="HISTORICO">📋 Histórico</button>
+        </div>
+
+        <!-- Sub-painel histórico completo (visível ao clicar em Histórico) -->
+        <div id="historicoSubPanel" style="display:none">
+          <!-- Stats -->
+          <div class="hist-stats-grid" id="histStatsGrid2">
+            <div class="hist-stat">
+              <span class="hist-stat-val" id="hsTotalOps2">—</span>
+              <span class="hist-stat-lbl">Operações</span>
+            </div>
+            <div class="hist-stat">
+              <span class="hist-stat-val green" id="hsWinRate2">—</span>
+              <span class="hist-stat-lbl">Win Rate</span>
+            </div>
+            <div class="hist-stat">
+              <span class="hist-stat-val green" id="hsMaiorLucro2">—</span>
+              <span class="hist-stat-lbl">Maior lucro</span>
+            </div>
+            <div class="hist-stat">
+              <span class="hist-stat-val green" id="hsLucroMes2">—</span>
+              <span class="hist-stat-lbl">Lucro mensal</span>
+            </div>
+          </div>
+          <!-- Filtros rápidos -->
+          <div class="hist-filter-row" style="margin-bottom:10px">
+            <button class="hist-f active" onclick="filterHist2('todos',this)">Todos</button>
+            <button class="hist-f" onclick="filterHist2('profit',this)">✅ Gains</button>
+            <button class="hist-f" onclick="filterHist2('loss',this)">❌ Loss</button>
+            <button class="hist-f" onclick="filterHist2('long',this)">🟢 LONG</button>
+            <button class="hist-f" onclick="filterHist2('short',this)">🔴 SHORT</button>
+            <div class="hist-search-wrap">
+              <input class="hist-search" id="histSearch2" placeholder="Buscar par..." oninput="searchHist2(this.value)"/>
+            </div>
+          </div>
+          <!-- Feed de trades -->
+          <div id="historico2Feed"></div>
         </div>
         <!-- Métricas gerais (TODOS/LONG/SHORT) -->
         <div class="perf-grid" id="perfGrid">
@@ -291,6 +341,9 @@
               <a href="https://chk.eduzz.com/Q9N2NOVB01" target="_blank" class="plano-btn plano-btn-pro">
                 Assinar Plano Pro →
               </a>
+              <a href="https://chk.eduzz.com/Q9N2NOVB01" target="_blank" class="plano-cta-pro">
+                ⚡ Adquirir versão PRO
+              </a>
               <div class="plano-guarantee">🔒 Garantia de 7 dias</div>
             </div>
 
@@ -333,12 +386,23 @@
               <textarea class="com-textarea" id="comCaption" placeholder="Descreva seu resultado..." maxlength="200"></textarea>
             </div>
             <div class="com-form-group">
-              <label class="com-label">IMAGEM</label>
-              <div class="com-upload-area" onclick="document.getElementById('comFile').click()">
-                <input type="file" id="comFile" accept="image/*" style="display:none" onchange="previewImagem(this)"/>
+              <label class="com-label">FOTO / ARQUIVO</label>
+              <!-- Botões de upload -->
+              <div class="com-upload-btns">
+                <button class="com-upload-opt" onclick="document.getElementById('comFileImg').click()">
+                  <span>📷</span><span>Foto / Imagem</span>
+                </button>
+                <button class="com-upload-opt" onclick="document.getElementById('comFileFile').click()">
+                  <span>📎</span><span>Arquivo</span>
+                </button>
+              </div>
+              <input type="file" id="comFileImg"  accept="image/*"                    style="display:none" onchange="previewImagem(this)"/>
+              <input type="file" id="comFileFile" accept=".pdf,.png,.jpg,.jpeg,.gif"  style="display:none" onchange="previewImagem(this)"/>
+              <!-- Preview -->
+              <div class="com-upload-area com-upload-preview" id="comUploadArea" onclick="document.getElementById('comFileImg').click()">
                 <div id="comPreview">
                   <div style="font-size:32px">📷</div>
-                  <div style="font-size:12px;margin-top:8px;color:var(--text3)">Toque para selecionar imagem</div>
+                  <div style="font-size:12px;margin-top:8px;color:var(--text3)">Ou toque aqui para selecionar</div>
                 </div>
               </div>
             </div>
@@ -378,10 +442,6 @@
       <button class="nav-btn" data-tab="sinais">
         <span class="nav-icon">📋</span>
         <span class="nav-label">Sinais</span>
-      </button>
-      <button class="nav-btn" data-tab="historico">
-        <span class="nav-icon">📈</span>
-        <span class="nav-label">Histórico</span>
       </button>
       <button class="nav-btn" data-tab="comunidade">
         <span class="nav-icon">📸</span>
