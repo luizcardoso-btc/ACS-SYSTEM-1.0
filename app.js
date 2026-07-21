@@ -1828,62 +1828,83 @@ function loadHistorico2() {
   if (!feed) return;
   feed.innerHTML = '<div class="empty-state"><div class="empty-icon">⏳</div><div class="empty-sub">Carregando histórico...</div></div>';
 
-  var adminKey = localStorage.getItem("acs_admin_key") || localStorage.getItem("bybit_key") || "";
-  var url = adminKey
-    ? "/api/admin/signals?key=" + encodeURIComponent(adminKey)
-    : "/api/signals";
-
-  fetch(url)
-    .then(function(r) { return r.json(); })
+  // Usa rota dedicada que retorna TODOS os fechados + métricas do mês
+  fetch("/api/signals/history")
+    .then(function(r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
     .then(function(d) {
-      var sigs = d.signals || (Array.isArray(d) ? d : []);
-      hist2Data = sigs
-        .filter(function(s) { return s.status === "profit" || s.status === "loss" || s.status === "closed"; })
-        .sort(function(a,b) {
-          return new Date(b.closed_at || b.updated_at || b.created_at)
-               - new Date(a.closed_at || a.updated_at || a.created_at);
-        });
-      updateHist2Stats();
+      hist2Data = d.signals || [];
+      hist2Metrics = d.metrics || {};
+      updateHist2Stats(d.metrics);
       renderHist2Feed();
     })
-    .catch(function() {
-      if (feed) feed.innerHTML = '<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-sub">Erro ao carregar</div></div>';
+    .catch(function(e) {
+      // Fallback: tenta rota admin se usuário for admin
+      var adminKey = localStorage.getItem("acs_admin_key") || localStorage.getItem("bybit_key") || "";
+      if (!adminKey) {
+        if (feed) feed.innerHTML = '<div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">Nenhum histórico disponível</div><div class="empty-sub">Histórico disponível após os primeiros sinais fechados</div></div>';
+        return;
+      }
+      fetch("/api/admin/signals?key=" + encodeURIComponent(adminKey))
+        .then(function(r2) { return r2.json(); })
+        .then(function(d2) {
+          var sigs = d2.signals || (Array.isArray(d2) ? d2 : []);
+          hist2Data = sigs
+            .filter(function(s) { return s.status === "profit" || s.status === "loss" || s.status === "closed"; })
+            .sort(function(a,b) {
+              return new Date(b.closed_at || b.updated_at || b.created_at)
+                   - new Date(a.closed_at || a.updated_at || a.created_at);
+            });
+          updateHist2Stats(null);
+          renderHist2Feed();
+        })
+        .catch(function() {
+          if (feed) feed.innerHTML = '<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-sub">Erro ao carregar histórico</div></div>';
+        });
     });
 }
 
-function updateHist2Stats() {
+var hist2Metrics = {};
+
+function updateHist2Stats(serverMetrics) {
+  // Usa métricas do servidor quando disponíveis (mais precisas)
+  var m = serverMetrics || hist2Metrics;
+
+  // Calcula localmente como fallback
   var profits = hist2Data.filter(function(s){ return s.status === "profit"; });
   var losses  = hist2Data.filter(function(s){ return s.status === "loss"; });
   var total   = profits.length + losses.length;
-  var wr      = total > 0 ? Math.round(profits.length / total * 100) : null;
+  var wr      = m.winRate !== undefined ? m.winRate
+              : (total > 0 ? Math.round(profits.length / total * 100) : null);
 
   var pcts = profits.map(function(s){
     return parseFloat(s.result_pct || (s.profit_pct||"").replace(/[^0-9.-]/g,"")) || 0;
   }).filter(function(v){ return v > 0; });
 
-  // Lucro mensal — apenas trades do mês atual
-  var now      = new Date();
-  var thisMes  = profits.filter(function(s){
-    var d = new Date(s.closed_at || s.updated_at || s.created_at);
-    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-  });
-  var mesPcts = thisMes.map(function(s){
-    return parseFloat(s.result_pct || (s.profit_pct||"").replace(/[^0-9.-]/g,"")) || 0;
-  }).filter(function(v){ return v > 0; });
-  var lucroMes = mesPcts.length
-    ? "+" + mesPcts.reduce(function(a,b){return a+b;},0).toFixed(0) + "%"
+  var maiorLucro = m.maiorLucro
+    ? "+" + m.maiorLucro + "%"
+    : (pcts.length ? "+" + Math.max.apply(null,pcts).toFixed(0) + "%" : "—");
+
+  var lucroMes = m.lucroMes && parseFloat(m.lucroMes) > 0
+    ? "+" + parseFloat(m.lucroMes).toFixed(0) + "%"
     : "—";
+
+  // Operações deste mês
+  var totalMes = m.thisMonth !== undefined ? m.thisMonth : hist2Data.length;
 
   function set(id, v, cls) {
     var el = document.getElementById(id);
     if (!el) return;
     el.textContent = v;
-    if (cls) el.className = "hist-stat-val " + cls;
+    if (cls !== undefined) el.className = "hist-stat-val " + cls;
   }
-  set("hsTotalOps2",   hist2Data.length, "");
-  set("hsWinRate2",    wr !== null ? wr + "%" : "—", wr >= 70 ? "green" : wr < 50 ? "red" : "");
-  set("hsMaiorLucro2", pcts.length ? "+" + Math.max.apply(null,pcts).toFixed(0)+"%" : "—", "green");
-  set("hsLucroMes2",   lucroMes, "green");
+  set("hsTotalOps2",   hist2Data.length + " (" + totalMes + " este mês)", "");
+  set("hsWinRate2",    wr !== null ? wr + "%" : "—",
+      wr !== null ? (wr >= 70 ? "green" : wr < 50 ? "red" : "") : "");
+  set("hsMaiorLucro2", maiorLucro, maiorLucro !== "—" ? "green" : "");
+  set("hsLucroMes2",   lucroMes,   lucroMes   !== "—" ? "green" : "");
 }
 
 function renderHist2Feed() {
@@ -1962,4 +1983,3 @@ function searchHist2(q) {
   hist2Search = q;
   renderHist2Feed();
 }
-
