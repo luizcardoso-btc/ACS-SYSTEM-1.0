@@ -1,3 +1,251 @@
+// ══════════════════════════════════════════════
+// SISTEMA DE TEMA DIURNO / NOTURNO
+// ══════════════════════════════════════════════
+
+const THEME_KEY = 'acs_theme';
+
+function getAutoTheme() {
+  const hour = new Date().getHours();
+  return (hour >= 18 || hour < 6) ? 'night' : 'day';
+}
+
+function applyTheme(theme) {
+  const body = document.body;
+  body.classList.remove('theme-day', 'theme-night');
+  body.classList.add('theme-' + theme);
+
+  const btn = document.getElementById('btnTheme');
+  if (btn) {
+    btn.textContent = theme === 'night' ? '☀️' : '🌙';
+    btn.title = theme === 'night' ? 'Modo diurno' : 'Modo noturno';
+  }
+
+  // Atualiza theme-color da PWA
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = theme === 'night' ? '#03060A' : '#F0F4F0';
+
+  localStorage.setItem(THEME_KEY, theme);
+}
+
+function toggleTheme() {
+  const current = document.body.classList.contains('theme-night') ? 'night' : 'day';
+  const next = current === 'night' ? 'day' : 'night';
+  applyTheme(next);
+}
+
+function initTheme() {
+  // Se o usuário escolheu manualmente, respeita a escolha
+  const saved = localStorage.getItem(THEME_KEY);
+  if (saved) {
+    applyTheme(saved);
+  } else {
+    applyTheme(getAutoTheme());
+  }
+
+  // Verifica automaticamente a cada minuto se deve mudar o tema
+  setInterval(() => {
+    const saved2 = localStorage.getItem(THEME_KEY + '_manual');
+    if (!saved2) applyTheme(getAutoTheme()); // Só muda automaticamente se não foi manual
+  }, 60000);
+}
+
+// Inicia o tema ao carregar
+initTheme();
+
+// Carrega info de trial ao iniciar app
+document.addEventListener("DOMContentLoaded", () => {
+  loadTrialInfo();
+});
+
+// ══════════════════════════════════════════════
+// SISTEMA DE TRIAL / PLANOS
+// ══════════════════════════════════════════════
+
+let userTrialInfo = null;
+let MAX_TRIAL_SIGNALS = 2; // sinais visíveis após trial expirar
+
+async function loadTrialInfo() {
+  try {
+    // /api/auth/me já retorna o trial info via db.users.sanitize()
+    const res = await fetch("/api/auth/me");
+    if (!res.ok) return;
+    const data = await res.json();
+    userTrialInfo = data.trial;
+    // Sincroniza MAX_TRIAL_SIGNALS com o valor do servidor
+    if (data.trial?.signalLimit !== undefined && data.trial.signalLimit !== null) {
+      MAX_TRIAL_SIGNALS = data.trial.signalLimit;
+    }
+    updateTrialUI();
+  } catch(e) {
+    console.warn("[trial] Erro ao carregar info:", e.message);
+  }
+}
+
+function updateTrialUI() {
+  if (!userTrialInfo) return;
+
+  // Remove banners anteriores
+  document.querySelectorAll(".trial-banner,.upgrade-wall").forEach(el => el.remove());
+
+  const { isTrial, isExpired, daysLeft, isPaid } = userTrialInfo;
+
+  // Plano pago — sem banner
+  if (isPaid) return;
+
+  if (isTrial && !isExpired) {
+    // TRIAL ATIVO — mostra banner de contagem
+    showTrialBanner(daysLeft);
+  } else if (isExpired) {
+    // TRIAL EXPIRADO — limita sinais e mostra wall
+    limitSignalsToTrial();
+    showUpgradeWall(false); // não bloqueia tudo, só notifica
+  }
+}
+
+function showTrialBanner(daysLeft) {
+  const banner = document.createElement("div");
+  banner.className = "trial-banner";
+  const urgency = daysLeft <= 3;
+  banner.innerHTML = `
+    <div class="trial-banner-inner ${urgency ? "urgent" : ""}">
+      <span class="trial-icon">${urgency ? "⚠️" : "🎁"}</span>
+      <span class="trial-text">
+        ${urgency
+          ? `<strong>Apenas ${daysLeft} ${daysLeft === 1 ? "dia" : "dias"} restante${daysLeft !== 1 ? "s" : ""}</strong> do seu teste gratuito`
+          : `<strong>${daysLeft} dias</strong> restantes no seu teste gratuito`
+        }
+      </span>
+      <button class="trial-upgrade-btn" onclick="showUpgradeModal()">
+        ${urgency ? "⚡ Assinar agora" : "Assinar plano"}
+      </button>
+      <button class="trial-close-btn" onclick="closeBanner(this)">✕</button>
+    </div>`;
+
+  // Insere no topo do header
+  const header = document.getElementById("header");
+  if (header) header.insertAdjacentElement("afterend", banner);
+}
+
+function limitSignalsToTrial() {
+  // Esconde sinais além do limite após trial expirado
+  // Chamado após renderSinais()
+}
+
+function showUpgradeWall(blocking = false) {
+  if (blocking) {
+    // Bloqueia tela toda
+    const wall = document.createElement("div");
+    wall.className = "upgrade-wall";
+    wall.innerHTML = buildUpgradeHTML(true);
+    document.body.appendChild(wall);
+  } else {
+    // Mostra modal/seção suave
+    showUpgradeModal();
+  }
+}
+
+function showUpgradeModal() {
+  // Remove modal existente
+  document.querySelectorAll(".upgrade-modal").forEach(el => el.remove());
+
+  const modal = document.createElement("div");
+  modal.className = "upgrade-modal";
+  modal.innerHTML = buildUpgradeHTML(false);
+  document.body.appendChild(modal);
+  setTimeout(() => modal.classList.add("open"), 10);
+}
+
+function buildUpgradeHTML(isWall) {
+  return `
+    <div class="upgrade-box ${isWall ? "wall-box" : "modal-box"}">
+      ${!isWall ? '<button class="upgrade-close" onclick="closeUpgradeModal()">\u2715</button>' : ""}
+
+      <div class="upgrade-badge">🔓 DESBLOQUEIE O ACS SYSTEM COMPLETO</div>
+
+      ${userTrialInfo?.isExpired
+        ? '<div class="upgrade-title">Seu teste gratuito encerrou</div><div class="upgrade-sub">Você estava vendo apenas 2 sinais por dia. Assine para ver todos os sinais, análises IA e o scanner completo.</div>'
+        : '<div class="upgrade-title">Garanta acesso completo</div><div class="upgrade-sub">Continue aproveitando todos os recursos do ACS System sem interrupção.</div>'
+      }
+
+      <div class="upgrade-plans">
+
+        <!-- Semestral -->
+        <div class="upgrade-plan">
+          <div class="uplan-period">SEMESTRAL</div>
+          <div class="uplan-price">R$ 497</div>
+          <div class="uplan-parcel">ou 12x de R$ 41,42</div>
+          <ul class="uplan-list">
+            <li>✓ Todos os sinais sem limite</li>
+            <li>✓ App ACS System completo</li>
+            <li>✓ Scanner 200 pares</li>
+            <li>✓ Análise IA ilimitada</li>
+            <li>✓ Academia 8 aulas</li>
+          </ul>
+          <a href="https://chk.eduzz.com/Q9N2NOVB01" target="_blank" class="uplan-btn secondary">
+            Assinar Semestral
+          </a>
+        </div>
+
+        <!-- Anual — destaque -->
+        <div class="upgrade-plan featured">
+          <div class="uplan-badge-top">MAIS ESCOLHIDO</div>
+          <div class="uplan-period">ANUAL</div>
+          <div class="uplan-price featured-price">R$ 697</div>
+          <div class="uplan-parcel">ou 12x de R$ 58,08</div>
+          <ul class="uplan-list">
+            <li>✓ Tudo do Semestral</li>
+            <li>✓ <strong>12 meses garantidos</strong></li>
+            <li>✓ <strong>Bônus: Guia de gestão</strong></li>
+            <li>✓ <strong>Planilha de banca</strong></li>
+            <li>✓ Prioridade nos sinais</li>
+          </ul>
+          <a href="https://chk.eduzz.com/1488759" target="_blank" class="uplan-btn primary">
+            ⚡ Assinar Anual
+          </a>
+        </div>
+
+      </div>
+
+      <div class="upgrade-guarantee">🔒 Garantia de 7 dias · Cancele quando quiser</div>
+
+      ${!isWall ? '<div class="upgrade-skip"><button onclick="closeUpgradeModal()" style="background:none;border:none;color:var(--text4);font-size:11px;cursor:pointer;font-family:var(--font-body)">Continuar com vers\u00e3o limitada (2 sinais/dia)</button></div>' : ""}
+    </div>`;
+}
+
+// Aplica limite de sinais no DOM após renderizar
+function applyTrialLimit() {
+  if (!userTrialInfo || !userTrialInfo.isExpired) return;
+  const cards = document.querySelectorAll(".signal-card");
+  if (cards.length <= MAX_TRIAL_SIGNALS) return;
+
+  // Esconde sinais além do limite
+  cards.forEach((card, i) => {
+    if (i >= MAX_TRIAL_SIGNALS) {
+      card.style.display = "none";
+    }
+  });
+
+  // Adiciona card de "ver mais"
+  const existing = document.querySelector(".trial-limit-card");
+  if (existing) return;
+  const limitCard = document.createElement("div");
+  limitCard.className = "signal-card trial-limit-card";
+  limitCard.innerHTML = `
+    <div style="text-align:center;padding:16px">
+      <div style="font-size:20px;margin-bottom:8px">🔒</div>
+      <div style="font-size:13px;color:var(--text2);margin-bottom:12px">
+        <strong style="color:var(--text)">+${cards.length - MAX_TRIAL_SIGNALS} sinais</strong> disponíveis no plano pago
+      </div>
+      <button onclick="showUpgradeModal()" style="background:var(--green);color:#000;border:none;border-radius:8px;padding:8px 20px;font-weight:700;font-size:13px;cursor:pointer;font-family:var(--font-body)">
+        Ver todos os sinais
+      </button>
+    </div>`;
+  const parent = cards[0]?.parentNode;
+  if (parent) parent.appendChild(limitCard);
+}
+
+
+
 /* ══════════════════════════════════════════════
    ALFA CRIPTO SINAIS v2 — app.js
    + Preços reais via CoinGecko (proxy server)
