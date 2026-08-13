@@ -2121,9 +2121,8 @@ function searchHist2(q) {
   "use strict";
 
   /* >>> PASSO 3: quando tiver seu link de afiliado Bybit, troque aqui <<< */
-  const RP_REF_URL = "https://www.bybit.com/earn";
+const RP_REF_URL = "https://www.bybit.com/invite?ref=OKR4RY&medium=referral&utm_campaign=evergreen&share_to=link";
   const RP_API = "https://api.bybit.com";
-
   const RP_CSS = `
 #panel-renda { padding-bottom: 100px; }
 .rp-loading { text-align:center; padding:40px 0; color:var(--text3); font-family:var(--font-mono); font-size:12px; }
