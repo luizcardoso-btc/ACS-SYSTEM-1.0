@@ -843,6 +843,91 @@ app.use(express.static(__dirname));
 app.use(express.static(path.join(__dirname, "public")));
 
 // ══════════════════════════════════════════════
+/* ═══════════════════════════════════════════════
+   RENDA PASSIVA — rotas Earn (versão embutida)
+   ═══════════════════════════════════════════════ */
+(function () {
+  const PROVIDERS = {
+    bybit: {
+      nome: "Bybit",
+      baseUrl: process.env.BYBIT_BASE_URL || "https://api.bybit.com",
+      refUrl: process.env.EARN_BYBIT_REF_URL || "https://www.bybit.com/earn",
+      categorias: ["FlexibleSaving", "OnChain"],
+    },
+  };
+  const TTL = 10 * 60 * 1000;
+  let cache = { at: 0, data: null };
+
+  const parseApr = (v) => {
+    if (v == null) return null;
+    const n = parseFloat(String(v).replace("%", "").trim());
+    if (!Number.isFinite(n)) return null;
+    return n <= 1 ? +(n * 100).toFixed(2) : +n.toFixed(2);
+  };
+
+  async function getJson(url) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (data.retCode !== 0) throw new Error(data.retMsg || "retCode != 0");
+    return data.result;
+  }
+
+  async function fetchBybit(p) {
+    const out = [];
+    for (const categoria of p.categorias) {
+      try {
+        const result = await getJson(`${p.baseUrl}/v5/earn/product?category=${categoria}`);
+        for (const item of result?.list || []) {
+          if (item.status && item.status !== "Available") continue;
+          const apr = parseApr(item.estimateApr);
+          if (!apr || apr <= 0) continue;
+          out.push({
+            provider: "bybit",
+            providerNome: p.nome,
+            coin: String(item.coin || "").toUpperCase(),
+            tipo: categoria === "FlexibleSaving" ? "flexivel" : "onchain",
+            apr,
+            minimo: item.minStakeAmount ?? null,
+            prazoDias: item.duration ? Number(item.duration) : null,
+          });
+        }
+      } catch (_) { /* categoria falhou — segue */ }
+    }
+    return out;
+  }
+
+  function dedup(products) {
+    const best = new Map();
+    for (const pr of products) {
+      const k = `${pr.provider}:${pr.coin}:${pr.tipo}`;
+      if (!best.has(k) || best.get(k).apr < pr.apr) best.set(k, pr);
+    }
+    return [...best.values()].sort((a, b) => b.apr - a.apr);
+  }
+
+  app.get("/api/earn/products", auth.requireAuth, async (_req, res) => {
+    try {
+      if (cache.data && Date.now() - cache.at < TTL) return res.json(cache.data);
+      const products = dedup(await fetchBybit(PROVIDERS.bybit));
+      if (!products.length && cache.data) return res.json(cache.data);
+      if (!products.length)
+        return res.status(502).json({ error: "upstream", message: "Não consegui consultar os produtos agora." });
+      const payload = {
+        updatedAt: new Date().toISOString(),
+        providers: Object.fromEntries(
+          Object.entries(PROVIDERS).map(([k, v]) => [k, { nome: v.nome, refUrl: v.refUrl }])
+        ),
+        products,
+      };
+      cache = { at: Date.now(), data: payload };
+      res.json(payload);
+    } catch (e) {
+      if (cache.data) return res.json(cache.data);
+      res.status(502).json({ error: "upstream", message: "Não consegui consultar os produtos agora." });
+    }
+  });
+})();
 app.listen(PORT, () => {
   console.log(`\n🚀 ALFA CRIPTO SINAIS v2 rodando na porta ${PORT}`);
   console.log(`   Preços reais:    /api/prices  (CoinGecko 30s cache)`);
