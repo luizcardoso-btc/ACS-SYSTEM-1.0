@@ -2112,3 +2112,174 @@ function searchHist2(q) {
   hist2Search = q;
   renderHist2Feed();
 }
+/* ═══════════════════════════════════════════════════════════
+   ACS SYSTEM — Renda Passiva (front-end auto-instalável)
+   Cria sozinho: estilos, aba "💵 Renda", painel e botão da navbar.
+   ═══════════════════════════════════════════════════════════ */
+(function () {
+  "use strict";
+
+  const RP_CSS = `
+#panel-renda { padding-bottom: 100px; }
+.rp-loading { text-align:center; padding:40px 0; color:var(--text3); font-family:var(--font-mono); font-size:12px; }
+.rp-header { text-align:center; margin:4px 0 18px; padding:0 6px; }
+.rp-title { font-family:var(--font-head); font-size:24px; font-weight:800; color:var(--text); letter-spacing:-.3px; }
+.rp-sub { font-size:12.5px; color:var(--text3); line-height:1.6; margin-top:6px; }
+.rp-sub strong { color:var(--text2); }
+.rp-upd { font-family:var(--font-mono); font-size:9px; color:var(--text4); letter-spacing:1px; margin-top:8px; }
+.rp-section-title { font-size:13px; font-weight:700; color:var(--text2); margin:16px 2px 10px; }
+.rp-grid { display:grid; grid-template-columns:1fr; gap:12px; }
+@media (min-width:560px){ .rp-grid { grid-template-columns:1fr 1fr; } }
+.rp-card { background:var(--bg2); border:1px solid var(--border); border-radius:16px; padding:16px; }
+.rp-card-top { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px; }
+.rp-coin { display:flex; align-items:center; gap:8px; font-weight:800; color:var(--text); font-size:15px; }
+.rp-coin-ic { width:30px; height:30px; border-radius:50%; background:linear-gradient(135deg,var(--green),var(--purple)); color:#000; font-size:9px; font-weight:800; display:flex; align-items:center; justify-content:center; }
+.rp-badge { font-family:var(--font-mono); font-size:8.5px; letter-spacing:.6px; color:var(--green); background:var(--green-dim); border:1px solid var(--green-bd); border-radius:5px; padding:3px 7px; white-space:nowrap; }
+.rp-badge-fix { color:var(--yellow); background:rgba(255,170,0,.08); border-color:rgba(255,170,0,.22); }
+.rp-apr { font-family:var(--font-head); font-size:30px; font-weight:800; color:var(--green); letter-spacing:-.5px; margin:2px 0 4px; }
+.rp-apr small { font-size:10px; font-weight:600; color:var(--text4); letter-spacing:.4px; }
+.rp-min { font-family:var(--font-mono); font-size:10px; color:var(--text4); margin-bottom:10px; }
+.rp-btn { display:block; text-align:center; background:var(--green); color:#000; font-weight:700; font-size:13.5px; border-radius:10px; padding:12px; text-decoration:none; transition:.15s; }
+.rp-btn:hover { opacity:.86; }
+.rp-card-note { text-align:center; font-family:var(--font-mono); font-size:9px; color:var(--text4); margin-top:7px; }
+.rp-how { background:var(--bg2); border:1px solid var(--border); border-radius:14px; padding:16px; margin-top:18px; }
+.rp-how-title { font-weight:700; color:var(--text); font-size:14px; margin-bottom:10px; }
+.rp-step { font-size:12.5px; color:var(--text2); line-height:1.7; margin-bottom:6px; }
+.rp-step b { color:var(--green); }
+.rp-disclaimer { font-size:10px; color:var(--text4); line-height:1.7; border:1px solid var(--border); border-radius:10px; padding:12px; margin-top:14px; background:var(--bg2); }
+.rp-disclaimer strong { color:var(--text3); }
+body.theme-day .rp-card, body.theme-day .rp-how, body.theme-day .rp-disclaimer { background:#fff; border-color:#C8D8C8; }
+`;
+
+  let rpData = null;
+  const RP_STABLES = new Set(["USDT", "USDC", "DAI", "USDE", "FDUSD"]);
+
+  const rpEsc = (s) =>
+    String(s ?? "").replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const rpApr = (n) => `${String(n.toFixed(2)).replace(".", ",")}%`;
+
+  async function loadRendaPassiva() {
+    const wrap = document.getElementById("rendaPassivaWrap");
+    if (!wrap) return;
+    if (!rpData) wrap.innerHTML = '<div class="rp-loading">Consultando taxas ao vivo…</div>';
+    try {
+      const res = await fetch("/api/earn/products");
+      if (!res.ok) throw new Error();
+      rpData = await res.json();
+      renderRendaPassiva();
+    } catch (_) {
+      wrap.innerHTML =
+        '<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-sub">Não consegui carregar as taxas agora. Tente de novo em instantes.</div></div>';
+    }
+  }
+
+  function rpCard(p, refUrl) {
+    const tipo = p.tipo === "flexivel"
+      ? '<span class="rp-badge">FLEXÍVEL · resgata quando quiser</span>'
+      : `<span class="rp-badge rp-badge-fix">${p.prazoDias ? `PRAZO · ${p.prazoDias} dias` : "ON-CHAIN"}</span>`;
+    const min = p.minimo ? `<div class="rp-min">Aplicação mínima: ${rpEsc(p.minimo)} ${rpEsc(p.coin)}</div>` : "";
+    return `
+    <div class="rp-card">
+      <div class="rp-card-top">
+        <div class="rp-coin"><span class="rp-coin-ic">${rpEsc(p.coin.slice(0, 4))}</span>${rpEsc(p.coin)}</div>
+        ${tipo}
+      </div>
+      <div class="rp-apr">${rpApr(p.apr)} <small>APR estimada*</small></div>
+      ${min}
+      <a class="rp-btn" href="${rpEsc(refUrl)}" target="_blank" rel="noopener">Contratar na ${rpEsc(p.providerNome)} →</a>
+      <div class="rp-card-note">Na sua própria conta, direto na exchange</div>
+    </div>`;
+  }
+
+  function renderRendaPassiva() {
+    const wrap = document.getElementById("rendaPassivaWrap");
+    if (!wrap || !rpData) return;
+    const ref = (p) => rpData.providers[p.provider]?.refUrl || "#";
+    const stables = rpData.products.filter((p) => RP_STABLES.has(p.coin));
+    const outras  = rpData.products.filter((p) => !RP_STABLES.has(p.coin)).slice(0, 9);
+    const upd = new Date(rpData.updatedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+
+    wrap.innerHTML = `
+      <div class="rp-header">
+        <h2 class="rp-title">Renda Passiva</h2>
+        <p class="rp-sub">Taxas ao vivo dos produtos Earn — você aplica <strong>na sua própria conta</strong> na exchange. O dinheiro nunca passa pelo ACS.</p>
+        <div class="rp-upd">Taxas atualizadas às ${upd}</div>
+      </div>
+      ${stables.length ? `<div class="rp-section-title">💵 Em dólar (stablecoins)</div>
+      <div class="rp-grid">${stables.map((p) => rpCard(p, ref(p))).join("")}</div>` : ""}
+      ${outras.length ? `<div class="rp-section-title">🪙 Outras moedas</div>
+      <div class="rp-grid">${outras.map((p) => rpCard(p, ref(p))).join("")}</div>` : ""}
+      <div class="rp-how">
+        <div class="rp-how-title">Como funciona</div>
+        <div class="rp-step"><b>1.</b> Crie (ou acesse) sua conta na exchange pelo botão — a conta é sua, no seu nome e CPF.</div>
+        <div class="rp-step"><b>2.</b> Escolha o produto e aplique lá dentro — o ACS não recebe, não guarda e não movimenta valores.</div>
+        <div class="rp-step"><b>3.</b> Acompanhe por aqui: em breve você conecta sua API em modo somente-leitura e vê seus rendimentos neste painel.</div>
+      </div>
+      <div class="rp-disclaimer">
+        *APR estimada e <strong>variável</strong>, informada pela exchange no momento da consulta — não é rendimento garantido e pode mudar sem aviso. Criptoativos envolvem risco, incluindo perda do valor aplicado. Conteúdo informativo e educacional: <strong>não é recomendação de investimento</strong>. O ACS System pode receber comissão de indicação da exchange, sem custo adicional para você. O ACS System não custodia valores nem intermedeia aplicações.
+      </div>`;
+  }
+
+  function rpInstall() {
+    if (document.getElementById("panel-renda")) return;
+
+    if (!document.getElementById("rp-styles")) {
+      const st = document.createElement("style");
+      st.id = "rp-styles";
+      st.textContent = RP_CSS;
+      document.head.appendChild(st);
+    }
+
+    const eduTab = document.querySelector('.tab-btn[data-tab="edu"]');
+    const tabsBar = eduTab ? eduTab.parentElement : document.querySelector(".tab-btn")?.parentElement;
+    if (tabsBar) {
+      const b = document.createElement("button");
+      b.className = "tab-btn";
+      b.dataset.tab = "renda";
+      b.textContent = "💵 Renda";
+      eduTab ? tabsBar.insertBefore(b, eduTab) : tabsBar.appendChild(b);
+    }
+
+    const panelEdu = document.getElementById("panel-edu");
+    const refPanel = panelEdu || document.querySelector(".panel");
+    if (refPanel) {
+      const sec = document.createElement("section");
+      sec.className = "panel";
+      sec.id = "panel-renda";
+      sec.style.display = "none";
+      sec.innerHTML = '<div id="rendaPassivaWrap"></div>';
+      panelEdu ? refPanel.parentElement.insertBefore(sec, panelEdu)
+               : refPanel.parentElement.appendChild(sec);
+    }
+
+    const navBar = document.querySelector(".nav-bar");
+    if (navBar) {
+      const nb = document.createElement("button");
+      nb.className = "nav-btn";
+      nb.dataset.tab = "renda";
+      nb.innerHTML = '<span class="nav-icon">💵</span><span class="nav-label">Renda</span>';
+      navBar.appendChild(nb);
+    }
+  }
+
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-tab]");
+    if (!btn || btn.dataset.tab !== "renda") return;
+    loadRendaPassiva();
+    setTimeout(() => {
+      const p = document.getElementById("panel-renda");
+      if (!p || p.style.display !== "none") return;
+      document.querySelectorAll(".panel").forEach((s) => (s.style.display = "none"));
+      p.style.display = "";
+      document.querySelectorAll(".tab-btn,.nav-btn").forEach((x) =>
+        x.classList.toggle("active", x.dataset.tab === "renda"));
+    }, 0);
+  });
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", rpInstall);
+  } else {
+    rpInstall();
+  }
+})();
