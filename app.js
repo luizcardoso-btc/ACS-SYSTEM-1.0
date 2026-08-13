@@ -2113,10 +2113,16 @@ function searchHist2(q) {
   renderHist2Feed();
 }
 /* ═══════════════════════════════════════════════════════════
-   ACS SYSTEM — Renda Passiva v2 (front-end auto-instalável)
+   ACS SYSTEM — Renda Passiva v3 (front-end auto-instalável)
+   Busca as taxas DIRETO do navegador (mesma arquitetura do
+   scanner) e usa a rota do servidor apenas como plano B.
    ═══════════════════════════════════════════════════════════ */
 (function () {
   "use strict";
+
+  /* >>> PASSO 3: quando tiver seu link de afiliado Bybit, troque aqui <<< */
+  const RP_REF_URL = "https://www.bybit.com/earn";
+  const RP_API = "https://api.bybit.com";
 
   const RP_CSS = `
 #panel-renda { padding-bottom: 100px; }
@@ -2157,22 +2163,76 @@ body.theme-day .rp-card, body.theme-day .rp-how, body.theme-day .rp-disclaimer {
     String(s ?? "").replace(/[&<>"']/g, (c) =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const rpApr = (n) => `${String(n.toFixed(2)).replace(".", ",")}%`;
+  const rpParseApr = (v) => {
+    if (v == null) return null;
+    const n = parseFloat(String(v).replace("%", "").trim());
+    if (!Number.isFinite(n)) return null;
+    return n <= 1 ? +(n * 100).toFixed(2) : +n.toFixed(2);
+  };
+
+  /* ---------- BUSCA DIRETA (navegador → Bybit) ---------- */
+  async function rpFetchDireto() {
+    const cats = ["FlexibleSaving", "OnChain"];
+    const results = await Promise.allSettled(
+      cats.map((c) => fetch(`${RP_API}/v5/earn/product?category=${c}`).then((r) => r.json()))
+    );
+    const out = [];
+    results.forEach((r, i) => {
+      if (r.status !== "fulfilled" || r.value?.retCode !== 0) return;
+      for (const item of r.value.result?.list || []) {
+        if (item.status && item.status !== "Available") continue;
+        const apr = rpParseApr(item.estimateApr);
+        if (!apr || apr <= 0) continue;
+        out.push({
+          provider: "bybit",
+          providerNome: "Bybit",
+          coin: String(item.coin || "").toUpperCase(),
+          tipo: cats[i] === "FlexibleSaving" ? "flexivel" : "onchain",
+          apr,
+          minimo: item.minStakeAmount ?? null,
+          prazoDias: item.duration ? Number(item.duration) : null,
+        });
+      }
+    });
+    const best = new Map();
+    for (const p of out) {
+      const k = `${p.coin}:${p.tipo}`;
+      if (!best.has(k) || best.get(k).apr < p.apr) best.set(k, p);
+    }
+    return [...best.values()].sort((a, b) => b.apr - a.apr);
+  }
 
   async function loadRendaPassiva() {
     const wrap = document.getElementById("rendaPassivaWrap");
     if (!wrap) return;
     if (!rpData) wrap.innerHTML = '<div class="rp-loading">Consultando taxas ao vivo…</div>';
-    try {
+
+    try { // 1º: direto do navegador
+      const products = await rpFetchDireto();
+      if (products.length) {
+        rpData = {
+          updatedAt: new Date().toISOString(),
+          providers: { bybit: { nome: "Bybit", refUrl: RP_REF_URL } },
+          products,
+        };
+        renderRendaPassiva();
+        return;
+      }
+    } catch (_) {}
+
+    try { // 2º: plano B via servidor
       const res = await fetch("/api/earn/products");
       if (!res.ok) throw new Error();
       rpData = await res.json();
       renderRendaPassiva();
     } catch (_) {
       wrap.innerHTML =
-        '<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-sub">Não consegui carregar as taxas agora. Tente de novo em instantes.</div></div>';
+        '<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-sub">Não consegui carregar as taxas agora.</div><button class="rp-btn rp-retry" style="max-width:220px;margin:14px auto 0">Tentar de novo</button></div>';
+      wrap.querySelector(".rp-retry")?.addEventListener("click", loadRendaPassiva);
     }
   }
 
+  /* ---------- RENDER ---------- */
   function rpCard(p, refUrl) {
     const tipo = p.tipo === "flexivel"
       ? '<span class="rp-badge">FLEXÍVEL · resgata quando quiser</span>'
@@ -2194,7 +2254,7 @@ body.theme-day .rp-card, body.theme-day .rp-how, body.theme-day .rp-disclaimer {
   function renderRendaPassiva() {
     const wrap = document.getElementById("rendaPassivaWrap");
     if (!wrap || !rpData) return;
-    const ref = (p) => rpData.providers[p.provider]?.refUrl || "#";
+    const ref = (p) => rpData.providers[p.provider]?.refUrl || RP_REF_URL;
     const stables = rpData.products.filter((p) => RP_STABLES.has(p.coin));
     const outras  = rpData.products.filter((p) => !RP_STABLES.has(p.coin)).slice(0, 9);
     const upd = new Date(rpData.updatedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
@@ -2220,6 +2280,7 @@ body.theme-day .rp-card, body.theme-day .rp-how, body.theme-day .rp-disclaimer {
       </div>`;
   }
 
+  /* ---------- INSTALAÇÃO ---------- */
   function rpInstall() {
     if (!document.getElementById("rp-styles")) {
       const st = document.createElement("style");
@@ -2227,7 +2288,6 @@ body.theme-day .rp-card, body.theme-day .rp-how, body.theme-day .rp-disclaimer {
       st.textContent = RP_CSS;
       document.head.appendChild(st);
     }
-
     if (!document.querySelector('.tab-btn[data-tab="renda"]')) {
       const eduTab = document.querySelector('.tab-btn[data-tab="edu"]');
       const tabsBar = eduTab ? eduTab.parentElement : document.querySelector(".tab-btn")?.parentElement;
@@ -2239,7 +2299,6 @@ body.theme-day .rp-card, body.theme-day .rp-how, body.theme-day .rp-disclaimer {
         eduTab ? tabsBar.insertBefore(b, eduTab) : tabsBar.appendChild(b);
       }
     }
-
     if (!document.getElementById("panel-renda")) {
       const panelEdu = document.getElementById("panel-edu");
       const refPanel = panelEdu || document.querySelector(".panel");
@@ -2253,7 +2312,6 @@ body.theme-day .rp-card, body.theme-day .rp-how, body.theme-day .rp-disclaimer {
                  : refPanel.parentElement.appendChild(sec);
       }
     }
-
     const navBar =
       document.querySelector(".nav-btn")?.parentElement ||
       document.querySelector(".nav-bar, #nav-bar, .navbar");
@@ -2287,7 +2345,6 @@ body.theme-day .rp-card, body.theme-day .rp-how, body.theme-day .rp-disclaimer {
     });
   }
 
-  // Fase de CAPTURA: roda antes de qualquer handler do app
   document.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-tab]");
     if (!btn) return;
@@ -2295,9 +2352,9 @@ body.theme-day .rp-card, body.theme-day .rp-how, body.theme-day .rp-disclaimer {
       rpInstall();
       loadRendaPassiva();
       rpShow();
-      setTimeout(rpShow, 0); // reafirma caso o app troque o painel depois
+      setTimeout(rpShow, 0);
     } else {
-      rpRelease(); // devolve o controle das abas ao app
+      rpRelease();
     }
   }, true);
 
