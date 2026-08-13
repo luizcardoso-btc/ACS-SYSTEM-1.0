@@ -2124,6 +2124,7 @@ function searchHist2(q) {
 const RP_REF_URL = "https://www.bybit.com/invite?ref=OKR4RY&medium=referral&utm_campaign=evergreen&share_to=link";
   const RP_API = "https://api.bybit.com";
   const RP_CSS = `
+.nav-btn[data-tab="mercado"], .nav-btn[data-tab="planos"], .nav-btn[data-tab="renda"] { display:none !important; }
 #panel-renda { padding-bottom: 100px; }
 .rp-loading { text-align:center; padding:40px 0; color:var(--text3); font-family:var(--font-mono); font-size:12px; }
 .rp-header { text-align:center; margin:4px 0 18px; padding:0 6px; }
