@@ -2113,8 +2113,7 @@ function searchHist2(q) {
   renderHist2Feed();
 }
 /* ═══════════════════════════════════════════════════════════
-   ACS SYSTEM — Renda Passiva (front-end auto-instalável)
-   Cria sozinho: estilos, aba "💵 Renda", painel e botão da navbar.
+   ACS SYSTEM — Renda Passiva v2 (front-end auto-instalável)
    ═══════════════════════════════════════════════════════════ */
 (function () {
   "use strict";
@@ -2222,8 +2221,6 @@ body.theme-day .rp-card, body.theme-day .rp-how, body.theme-day .rp-disclaimer {
   }
 
   function rpInstall() {
-    if (document.getElementById("panel-renda")) return;
-
     if (!document.getElementById("rp-styles")) {
       const st = document.createElement("style");
       st.id = "rp-styles";
@@ -2231,30 +2228,36 @@ body.theme-day .rp-card, body.theme-day .rp-how, body.theme-day .rp-disclaimer {
       document.head.appendChild(st);
     }
 
-    const eduTab = document.querySelector('.tab-btn[data-tab="edu"]');
-    const tabsBar = eduTab ? eduTab.parentElement : document.querySelector(".tab-btn")?.parentElement;
-    if (tabsBar) {
-      const b = document.createElement("button");
-      b.className = "tab-btn";
-      b.dataset.tab = "renda";
-      b.textContent = "💵 Renda";
-      eduTab ? tabsBar.insertBefore(b, eduTab) : tabsBar.appendChild(b);
+    if (!document.querySelector('.tab-btn[data-tab="renda"]')) {
+      const eduTab = document.querySelector('.tab-btn[data-tab="edu"]');
+      const tabsBar = eduTab ? eduTab.parentElement : document.querySelector(".tab-btn")?.parentElement;
+      if (tabsBar) {
+        const b = document.createElement("button");
+        b.className = "tab-btn";
+        b.dataset.tab = "renda";
+        b.textContent = "💵 Renda";
+        eduTab ? tabsBar.insertBefore(b, eduTab) : tabsBar.appendChild(b);
+      }
     }
 
-    const panelEdu = document.getElementById("panel-edu");
-    const refPanel = panelEdu || document.querySelector(".panel");
-    if (refPanel) {
-      const sec = document.createElement("section");
-      sec.className = "panel";
-      sec.id = "panel-renda";
-      sec.style.display = "none";
-      sec.innerHTML = '<div id="rendaPassivaWrap"></div>';
-      panelEdu ? refPanel.parentElement.insertBefore(sec, panelEdu)
-               : refPanel.parentElement.appendChild(sec);
+    if (!document.getElementById("panel-renda")) {
+      const panelEdu = document.getElementById("panel-edu");
+      const refPanel = panelEdu || document.querySelector(".panel");
+      if (refPanel) {
+        const sec = document.createElement("section");
+        sec.className = "panel";
+        sec.id = "panel-renda";
+        sec.style.display = "none";
+        sec.innerHTML = '<div id="rendaPassivaWrap"></div>';
+        panelEdu ? refPanel.parentElement.insertBefore(sec, panelEdu)
+                 : refPanel.parentElement.appendChild(sec);
+      }
     }
 
-    const navBar = document.querySelector(".nav-bar");
-    if (navBar) {
+    const navBar =
+      document.querySelector(".nav-btn")?.parentElement ||
+      document.querySelector(".nav-bar, #nav-bar, .navbar");
+    if (navBar && !navBar.querySelector('[data-tab="renda"]')) {
       const nb = document.createElement("button");
       nb.className = "nav-btn";
       nb.dataset.tab = "renda";
@@ -2263,19 +2266,40 @@ body.theme-day .rp-card, body.theme-day .rp-how, body.theme-day .rp-disclaimer {
     }
   }
 
+  function rpShow() {
+    const p = document.getElementById("panel-renda");
+    if (!p) return;
+    document.querySelectorAll(".panel").forEach((s) => {
+      s.classList.remove("active");
+      if (s !== p) s.style.display = "none";
+    });
+    p.classList.add("active");
+    p.style.display = "block";
+    document.querySelectorAll(".tab-btn,.nav-btn").forEach((x) =>
+      x.classList.toggle("active", x.dataset.tab === "renda"));
+  }
+
+  function rpRelease() {
+    const p = document.getElementById("panel-renda");
+    if (p) { p.style.display = "none"; p.classList.remove("active"); }
+    document.querySelectorAll(".panel").forEach((s) => {
+      if (s.id !== "panel-renda") s.style.display = "";
+    });
+  }
+
+  // Fase de CAPTURA: roda antes de qualquer handler do app
   document.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-tab]");
-    if (!btn || btn.dataset.tab !== "renda") return;
-    loadRendaPassiva();
-    setTimeout(() => {
-      const p = document.getElementById("panel-renda");
-      if (!p || p.style.display !== "none") return;
-      document.querySelectorAll(".panel").forEach((s) => (s.style.display = "none"));
-      p.style.display = "";
-      document.querySelectorAll(".tab-btn,.nav-btn").forEach((x) =>
-        x.classList.toggle("active", x.dataset.tab === "renda"));
-    }, 0);
-  });
+    if (!btn) return;
+    if (btn.dataset.tab === "renda") {
+      rpInstall();
+      loadRendaPassiva();
+      rpShow();
+      setTimeout(rpShow, 0); // reafirma caso o app troque o painel depois
+    } else {
+      rpRelease(); // devolve o controle das abas ao app
+    }
+  }, true);
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", rpInstall);
