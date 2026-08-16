@@ -2534,3 +2534,95 @@ body.theme-day .rp-card, body.theme-day .rp-how, body.theme-day .rp-disclaimer {
       setTimeout(() => window.loadComunidade(), 0);
   }, true);
 })();
+/* ═══════════════════════════════════════════════════════════
+   ACS SYSTEM — TEMA CLEAN v1 (auto-instalável)
+   Re-pinta o app inteiro sobrescrevendo as variáveis de tema:
+   verde menta suave, contrastes reduzidos, zero neon/glow,
+   tipografia Inter. Reverter = apagar este bloco.
+   ═══════════════════════════════════════════════════════════ */
+(function () {
+  "use strict";
+  if (document.getElementById("acs-clean-theme")) return;
+
+  // Fonte Inter (leve, clean) — carregada uma vez
+  const lk = document.createElement("link");
+  lk.rel = "stylesheet";
+  lk.href = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap";
+  document.head.appendChild(lk);
+
+  const st = document.createElement("style");
+  st.id = "acs-clean-theme";
+  st.textContent = `
+/* ─── PALETA NOITE (padrão) ───
+   Ajuste fino: o tom de verde do app inteiro é a linha --green. */
+:root, body, body.theme-night {
+  --bg:        #0B0F0D !important;
+  --bg2:       #121714 !important;
+  --bg3:       #181F1B !important;
+  --border:    #1F2823 !important;
+  --border2:   #2A362F !important;
+
+  --green:     #3ECF8E !important;              /* <<< verde clean — troque aqui */
+  --green-dim: rgba(62,207,142,.09) !important;
+  --green-bd:  rgba(62,207,142,.28) !important;
+
+  --red:       #E0685F !important;
+  --yellow:    #D9B24A !important;
+  --gold:      #D9B24A !important;
+  --purple:    #8B7CF6 !important;
+  --blue:      #5BA8D9 !important;
+
+  --text:      #EDF2EF !important;
+  --text2:     #C2CCC6 !important;
+  --text3:     #8B968F !important;
+  --text4:     #646E67 !important;
+  --text5:     #4C554F !important;
+  --text6:     #3A423C !important;
+
+  --font-head: "Inter", -apple-system, "Segoe UI", sans-serif !important;
+  --font-body: "Inter", -apple-system, "Segoe UI", sans-serif !important;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", monospace !important;
+}
+
+/* ─── PALETA DIA (tema claro do auto-theme) ─── */
+body.theme-day {
+  --bg:        #F6F8F7 !important;
+  --bg2:       #FFFFFF !important;
+  --bg3:       #EFF3F1 !important;
+  --border:    #DCE4DF !important;
+  --border2:   #C9D4CE !important;
+  --green:     #17A96B !important;
+  --green-dim: rgba(23,169,107,.08) !important;
+  --green-bd:  rgba(23,169,107,.30) !important;
+  --red:       #D6554C !important;
+  --yellow:    #B8912E !important;
+  --text:      #17211C !important;
+  --text2:     #33413A !important;
+  --text3:     #5C6A63 !important;
+  --text4:     #86928B !important;
+}
+
+/* ─── DE-NEON GERAL ───
+   Remove brilhos e suaviza o peso visual sem tocar no layout. */
+* { text-shadow: none !important; }
+body { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+
+/* Sombras verdes chapadas dos módulos viram profundidade sutil */
+.plano-card.plano-featured { box-shadow: 0 8px 24px rgba(0,0,0,.35) !important; }
+.plano-btn-premium, .rp-btn, .com-post-btn, .com-submit-btn {
+  box-shadow: none !important;
+}
+.plano-btn-premium:hover, .rp-btn:hover { transform: none !important; opacity: .88; }
+
+/* Tracking mais calmo nos rótulos dos módulos */
+.rp-badge, .rp-upd, .planos-trial-badge, .plano-period, .com-label {
+  letter-spacing: .4px !important;
+}
+
+/* Bordas dos cards um fio mais presentes que o fundo, nunca gritando */
+.rp-card, .com-post, .plano-card, .com-form-wrap, .rp-how, .rp-disclaimer {
+  border-color: var(--border) !important;
+}
+`;
+  document.head.appendChild(st);
+})();
