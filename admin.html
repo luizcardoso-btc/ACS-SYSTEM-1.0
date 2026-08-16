@@ -114,6 +114,204 @@ tr:hover td{background:rgba(0,255,136,.02);}
 
 </style>
 </head>
+  <!-- ═══════════════════════════════════════════════════════════
+     ACS · MODERAÇÃO DA COMUNIDADE — módulo embutido no admin
+     Auto-instalável: botão flutuante + painel de aprovação.
+     Usa as rotas /api/admin/community já existentes (x-admin-key).
+     ═══════════════════════════════════════════════════════════ -->
+<script>
+(function () {
+  "use strict";
+  if (window.__acsModCom) return;
+  window.__acsModCom = true;
+
+  /* ---------- estilos (prefixo cmx- pra não colidir com o painel) ---------- */
+  const css = `
+  .cmx-fab{position:fixed;right:16px;bottom:16px;z-index:99998;background:#00FF88;color:#000;border:none;border-radius:26px;padding:12px 18px;font-weight:800;font-size:13px;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.45);font-family:inherit}
+  .cmx-fab b{background:#000;color:#00FF88;border-radius:10px;padding:1px 8px;margin-left:6px;font-size:11px}
+  .cmx-ov{position:fixed;inset:0;z-index:99999;background:rgba(3,6,9,.93);display:none;overflow-y:auto;padding:14px}
+  .cmx-ov.on{display:block}
+  .cmx-box{max-width:560px;margin:0 auto;font-family:-apple-system,"Segoe UI",Roboto,sans-serif;color:#E0EEF8}
+  .cmx-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  .cmx-h{font-size:16px;font-weight:800}.cmx-h span{color:#00FF88}
+  .cmx-x{background:transparent;border:1px solid #22333F;color:#8AAABB;border-radius:8px;padding:7px 14px;cursor:pointer;font-weight:700}
+  .cmx-tabs{display:flex;gap:6px;margin-bottom:12px}
+  .cmx-tabs button{flex:1;background:#0B1218;border:1px solid #15242E;color:#8AAABB;border-radius:8px;padding:9px 4px;font-size:12px;font-weight:700;cursor:pointer}
+  .cmx-tabs button.on{background:#00FF88;color:#000;border-color:#00FF88}
+  .cmx-card{background:#0B1218;border:1px solid #15242E;border-radius:14px;overflow:hidden;margin-bottom:12px}
+  .cmx-card.p{border-color:rgba(255,170,0,.45)}
+  .cmx-hd{display:flex;align-items:center;gap:10px;padding:11px 13px 7px}
+  .cmx-av{width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#00FF88,#7A5CFF);display:flex;align-items:center;justify-content:center;font-weight:800;color:#000;font-size:12px}
+  .cmx-un{font-size:13px;font-weight:700}
+  .cmx-dt{font-size:10px;color:#567788}
+  .cmx-st{margin-left:auto;font-size:9px;font-weight:800;padding:3px 8px;border-radius:5px}
+  .cmx-st.pending{background:rgba(255,170,0,.12);color:#FFAA00}
+  .cmx-st.approved{background:rgba(0,255,136,.1);color:#00FF88}
+  .cmx-st.rejected{background:rgba(255,61,107,.1);color:#FF3D6B}
+  .cmx-img{width:100%;display:block;max-height:360px;object-fit:contain;background:#000}
+  .cmx-cap{padding:9px 13px;font-size:13px;color:#8AAABB;line-height:1.5}
+  .cmx-ac{display:flex;gap:8px;padding:11px 13px 13px}
+  .cmx-ac button{flex:1;border:none;border-radius:8px;padding:10px;font-weight:800;font-size:12.5px;cursor:pointer}
+  .cmx-ok{background:#00FF88;color:#000}
+  .cmx-no{background:transparent;color:#FFAA00;border:1px solid rgba(255,170,0,.4)}
+  .cmx-del{background:transparent;color:#FF3D6B;border:1px solid rgba(255,61,107,.4);max-width:52px}
+  .cmx-empty{text-align:center;color:#567788;padding:44px 0;font-size:13px}
+  .cmx-toast{position:fixed;bottom:76px;left:50%;transform:translateX(-50%);z-index:100000;background:#00FF88;color:#000;font-weight:800;font-size:13px;padding:9px 20px;border-radius:22px;display:none}
+  `;
+  const st = document.createElement("style");
+  st.textContent = css;
+  document.head.appendChild(st);
+
+  /* ---------- DOM ---------- */
+  document.body.insertAdjacentHTML("beforeend", `
+    <button class="cmx-fab" id="cmxFab">📸 Comunidade <b id="cmxCount" style="display:none">0</b></button>
+    <div class="cmx-ov" id="cmxOv"><div class="cmx-box">
+      <div class="cmx-top">
+        <div class="cmx-h">ACS<span>·</span>MODERAÇÃO</div>
+        <button class="cmx-x" id="cmxX">Fechar ✕</button>
+      </div>
+      <div class="cmx-tabs">
+        <button data-f="pending" class="on">⏳ Pendentes</button>
+        <button data-f="approved">✅ Aprovados</button>
+        <button data-f="rejected">🚫 Rejeitados</button>
+      </div>
+      <div id="cmxList"><div class="cmx-empty">Carregando…</div></div>
+    </div></div>
+    <div class="cmx-toast" id="cmxToast"></div>
+  `);
+
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  function toast(msg) {
+    const t = $("cmxToast");
+    t.textContent = msg; t.style.display = "block";
+    setTimeout(() => (t.style.display = "none"), 1800);
+  }
+
+  /* ---------- admin key: reaproveita a salva, senão pede uma vez ---------- */
+  let KEY = localStorage.getItem("acs_admin_key") || "";
+  if (!KEY) {
+    for (const n of ["admin_key", "adminKey", "ADMIN_KEY", "x-admin-key"]) {
+      const v = localStorage.getItem(n);
+      if (v && v.length >= 4) { KEY = v; break; }
+    }
+  }
+  if (!KEY) KEY = new URLSearchParams(location.search).get("key") || "";
+  if (KEY) localStorage.setItem("acs_admin_key", KEY);
+
+  function pedirKey() {
+    const k = (prompt("Cole sua ADMIN_KEY (a mesma do Railway):", "") || "").trim();
+    if (k) { KEY = k; localStorage.setItem("acs_admin_key", k); }
+    return KEY;
+  }
+
+  async function api(path, opts = {}, interactive = false) {
+    if (!KEY && interactive) pedirKey();
+    if (!KEY) throw new Error("no_key");
+    const res = await fetch(path, {
+      ...opts,
+      headers: { "Content-Type": "application/json", "x-admin-key": KEY, ...(opts.headers || {}) },
+    });
+    if (res.status === 401) {
+      localStorage.removeItem("acs_admin_key"); KEY = "";
+      if (interactive && pedirKey()) return api(path, opts, false);
+      if (interactive) toast("Admin key inválida");
+      throw new Error("401");
+    }
+    return res.json();
+  }
+
+  /* ---------- estado + ações ---------- */
+  let POSTS = [];
+  let FILTRO = "pending";
+
+  async function carregar(interactive = false) {
+    try {
+      const data = await api("/api/admin/community", {}, interactive);
+      POSTS = data.posts || [];
+      const n = POSTS.filter((p) => p.status === "pending").length;
+      const c = $("cmxCount");
+      c.textContent = n;
+      c.style.display = n > 0 ? "" : "none";
+      if ($("cmxOv").classList.contains("on")) render();
+    } catch (_) {}
+  }
+
+  function render() {
+    const list = POSTS.filter((p) => p.status === FILTRO);
+    if (!list.length) {
+      $("cmxList").innerHTML = '<div class="cmx-empty">Nada aqui por enquanto.</div>';
+      return;
+    }
+    $("cmxList").innerHTML = list.map((p) => {
+      const dt = p.created_at ? new Date(p.created_at).toLocaleString("pt-BR",
+        { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
+      const stTxt = p.status === "pending" ? "PENDENTE" : p.status === "approved" ? "APROVADO" : "REJEITADO";
+      let acts = "";
+      if (p.status === "pending")
+        acts = `<button class="cmx-ok" data-act="approved" data-id="${p.id}">✅ Aprovar</button>
+                <button class="cmx-no" data-act="rejected" data-id="${p.id}">Rejeitar</button>`;
+      else if (p.status === "approved")
+        acts = `<button class="cmx-no" data-act="rejected" data-id="${p.id}">Despublicar</button>`;
+      else
+        acts = `<button class="cmx-ok" data-act="approved" data-id="${p.id}">✅ Aprovar mesmo assim</button>`;
+      acts += `<button class="cmx-del" data-act="del" data-id="${p.id}">🗑</button>`;
+      return `<div class="cmx-card ${p.status === "pending" ? "p" : ""}">
+        <div class="cmx-hd">
+          <div class="cmx-av">${esc((p.user_name || "M").charAt(0).toUpperCase())}</div>
+          <div><div class="cmx-un">${esc(p.user_name || "Membro")}</div>
+          <div class="cmx-dt">#${p.id} · ${dt}</div></div>
+          <div class="cmx-st ${p.status}">${stTxt}</div>
+        </div>
+        <img class="cmx-img" src="${esc(p.image)}" loading="lazy"/>
+        ${p.caption ? `<div class="cmx-cap">${esc(p.caption)}</div>` : ""}
+        <div class="cmx-ac">${acts}</div>
+      </div>`;
+    }).join("");
+  }
+
+  /* ---------- eventos ---------- */
+  $("cmxFab").addEventListener("click", () => {
+    $("cmxOv").classList.add("on");
+    carregar(true);
+  });
+  $("cmxX").addEventListener("click", () => $("cmxOv").classList.remove("on"));
+
+  document.querySelectorAll(".cmx-tabs button").forEach((b) =>
+    b.addEventListener("click", () => {
+      FILTRO = b.dataset.f;
+      document.querySelectorAll(".cmx-tabs button").forEach((x) =>
+        x.classList.toggle("on", x === b));
+      render();
+    }));
+
+  $("cmxList").addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-act]");
+    if (!b) return;
+    const id = Number(b.dataset.id);
+    try {
+      if (b.dataset.act === "del") {
+        if (!confirm("Excluir este post permanentemente?")) return;
+        await api("/api/admin/community/" + id, { method: "DELETE" }, true);
+        toast("Post excluído");
+      } else {
+        await api("/api/admin/community/" + id, {
+          method: "PATCH",
+          body: JSON.stringify({ status: b.dataset.act }),
+        }, true);
+        toast(b.dataset.act === "approved" ? "Post aprovado ✅" : "Post rejeitado");
+      }
+      carregar();
+    } catch (_) {}
+  });
+
+  /* ---------- fila ao vivo: contador atualiza a cada 30s ---------- */
+  if (KEY) carregar();
+  setInterval(() => { if (KEY) carregar(); }, 30000);
+})();
+</script>
 <body>
 
 <!-- ══ GATE ══ -->
