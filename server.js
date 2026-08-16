@@ -936,3 +936,87 @@ app.listen(PORT, () => {
 });
 
 setInterval(() => db.sessions.cleanExpired(), 60 * 60 * 1000).unref();
+/* ═══════════════════════════════════════════════
+   COMUNIDADE v2 — feed de resultados (embutida)
+   ═══════════════════════════════════════════════ */
+(function () {
+  const fs = require("fs");
+  const path = require("path");
+  const CM_FILE = path.join(process.env.DATA_DIR || __dirname, "community_data.json");
+
+  let cm = { posts: [], nextPost: 1 };
+  try { cm = Object.assign(cm, JSON.parse(fs.readFileSync(CM_FILE, "utf8"))); } catch (_) {}
+
+  let cmSaveTimer = null;
+  function cmSave() {
+    clearTimeout(cmSaveTimer);
+    cmSaveTimer = setTimeout(() => {
+      fs.writeFile(CM_FILE, JSON.stringify(cm), (err) => {
+        if (err) console.error("[comunidade] save:", err.message);
+      });
+    }, 400);
+  }
+
+  const CM_IMG = /^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/;
+  const cmName = (u) => u.name || (u.email ? u.email.split("@")[0] : "Membro");
+
+  // Feed: aprovados de todos + pendentes do próprio usuário
+  app.get("/api/community/posts", auth.requireAuth, (req, res) => {
+    const user = res.locals.user;
+    const all = [...cm.posts].sort((a, b) => b.id - a.id);
+    res.json({
+      posts: all.filter((p) => p.status === "approved").slice(0, 50),
+      myPending: all.filter((p) => p.status === "pending" && p.user_id === user.id),
+    });
+  });
+
+  // Novo post → entra na fila de aprovação
+  app.post("/api/community/posts", auth.requireAuth, (req, res) => {
+    const user = res.locals.user;
+    const { image, caption } = req.body || {};
+    if (!image || typeof image !== "string")
+      return res.status(400).json({ error: "missing_image", message: "Envie uma imagem." });
+    if (image.length > 3_000_000)
+      return res.status(413).json({ error: "too_large", message: "Imagem muito grande." });
+    if (!CM_IMG.test(image))
+      return res.status(400).json({ error: "invalid_image", message: "Formato de imagem inválido." });
+    const fila = cm.posts.filter((p) => p.status === "pending" && p.user_id === user.id).length;
+    if (fila >= 3)
+      return res.status(429).json({ error: "queue_full", message: "Você já tem 3 posts aguardando aprovação." });
+    const post = {
+      id: cm.nextPost++,
+      user_id: user.id,
+      user_name: cmName(user),
+      image,
+      caption: String(caption || "").slice(0, 200),
+      status: "pending",
+      created_at: new Date().toISOString(),
+    };
+    cm.posts.push(post);
+    cmSave();
+    res.json({ ok: true, post: { id: post.id, status: post.status } });
+  });
+
+  // Moderação (admin)
+  app.get("/api/admin/community", requireAdmin, (_req, res) => {
+    res.json({ posts: [...cm.posts].sort((a, b) => b.id - a.id) });
+  });
+
+  app.patch("/api/admin/community/:id", requireAdmin, (req, res) => {
+    const { status } = req.body || {};
+    if (!["approved", "rejected"].includes(status))
+      return res.status(400).json({ error: "invalid_status" });
+    const p = cm.posts.find((x) => x.id === Number(req.params.id));
+    if (!p) return res.status(404).json({ error: "not_found" });
+    p.status = status;
+    cmSave();
+    res.json({ ok: true, post: p });
+  });
+
+  app.delete("/api/admin/community/:id", requireAdmin, (req, res) => {
+    const before = cm.posts.length;
+    cm.posts = cm.posts.filter((x) => x.id !== Number(req.params.id));
+    cmSave();
+    res.json({ ok: cm.posts.length < before });
+  });
+})();
