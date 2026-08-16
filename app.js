@@ -2535,9 +2535,10 @@ body.theme-day .rp-card, body.theme-day .rp-how, body.theme-day .rp-disclaimer {
   }, true);
 })();
 /* ═══════════════════════════════════════════════════════════
-   ACS SYSTEM — TEMA CLEAN v1.1 (auto-instalável)
-   v1 + barra inferior corrigida (largura total, fundo integrado)
-   + fundo levemente recalibrado + scrollbar discreta.
+   ACS SYSTEM — TEMA CLEAN v1.2 (auto-instalável)
+   v1.1 + correção da barra inferior no desktop:
+   remove o transform herdado e alinha a barra à coluna do app
+   em telas largas; no mobile segue largura total.
    Reverter = apagar este bloco.
    ═══════════════════════════════════════════════════════════ */
 (function () {
@@ -2601,10 +2602,11 @@ body.theme-day {
 * { text-shadow: none !important; }
 body { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
 
-/* Barra inferior: largura total, fundo integrado, ícones distribuídos */
+/* Barra inferior: sem transform herdado, largura total por padrão */
 .acs-clean-nav {
   left: 0 !important; right: 0 !important;
   width: 100% !important; max-width: 100% !important;
+  transform: none !important; margin: 0 !important;
   display: flex !important; justify-content: space-around !important;
   background: var(--bg2) !important;
   border-top: 1px solid var(--border) !important;
@@ -2614,7 +2616,6 @@ body { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; 
 }
 .acs-clean-nav .nav-btn { flex: 1; background: transparent !important; }
 
-/* Sombras verdes viram profundidade neutra */
 .plano-card.plano-featured { box-shadow: 0 8px 24px rgba(0,0,0,.35) !important; }
 .plano-btn-premium, .rp-btn, .com-post-btn, .com-submit-btn { box-shadow: none !important; }
 .plano-btn-premium:hover, .rp-btn:hover { transform: none !important; opacity: .88; }
@@ -2622,21 +2623,45 @@ body { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; 
 .rp-badge, .rp-upd, .planos-trial-badge, .plano-period, .com-label { letter-spacing: .4px !important; }
 .rp-card, .com-post, .plano-card, .com-form-wrap, .rp-how, .rp-disclaimer { border-color: var(--border) !important; }
 
-/* Scrollbar discreta (desktop) */
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 `;
   document.head.appendChild(st);
 
-  // Adota a barra inferior (acha pelo botão, independe do nome da classe do container)
+  /* Barra: adota a classe e alinha à coluna do app em telas largas */
+  function nav() { return document.querySelector(".nav-btn")?.parentElement || null; }
+
   function adotarNav() {
-    const nav = document.querySelector(".nav-btn")?.parentElement;
-    if (nav) nav.classList.add("acs-clean-nav");
+    const n = nav();
+    if (n) n.classList.add("acs-clean-nav");
+    alinharNav();
   }
+
+  function alinharNav() {
+    const n = nav();
+    if (!n) return;
+    const ref = document.querySelector(".tab-btn")?.parentElement; // coluna do app
+    const r = ref ? ref.getBoundingClientRect() : null;
+    const desktop = r && r.width > 200 && window.innerWidth > r.width + 80;
+    if (desktop) {
+      n.style.setProperty("left", Math.round(r.left) + "px", "important");
+      n.style.setProperty("width", Math.round(r.width) + "px", "important");
+      n.style.setProperty("right", "auto", "important");
+      n.style.setProperty("border-left", "1px solid var(--border)", "important");
+      n.style.setProperty("border-right", "1px solid var(--border)", "important");
+      n.style.setProperty("border-radius", "14px 14px 0 0", "important");
+    } else {
+      ["left", "width", "right", "border-left", "border-right", "border-radius"]
+        .forEach((p) => n.style.removeProperty(p));
+    }
+  }
+
+  window.addEventListener("resize", alinharNav);
+
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", adotarNav);
+    document.addEventListener("DOMContentLoaded", () => { adotarNav(); setTimeout(alinharNav, 300); });
   } else {
-    adotarNav();
+    adotarNav(); setTimeout(alinharNav, 300);
   }
 })();
