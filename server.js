@@ -1,14 +1,19 @@
 /* ══════════════════════════════════════════════
-   server.js — ALFA CRIPTO SINAIS v2.1
+   server.js — ALFA CRIPTO SINAIS v2.2
    + Preços reais via CoinGecko
    + Signals persistidos no banco (CRUD admin)
    + Targets ativam automaticamente com preço real
    + Auth por email/senha · Webhook Eduzz
    ── v2.1 ──
    + Comunidade autocontida (posts com aprovação)
-   + Limite de body 4mb (upload de imagens)
-   + Rota Earn usando sessão persistida
+   + Limite de body 4mb · Rota Earn com sessão persistida
    + Bloqueio de arquivos sensíveis no static
+   ── v2.2 ──
+   + Feed da Comunidade leve: imagens por URL com cache
+     (/api/community/img/:id) — JSON do feed sem base64
+   + 2FA TOTP nativo (Authy/Google/Microsoft Authenticator):
+     login em 2 etapas quando ativo, ativação via QR,
+     reset pelo admin por URL
    ══════════════════════════════════════════════ */
 
 require("dotenv").config();
@@ -89,6 +94,52 @@ function requirePageAuthPersisted(req, res, next) {
   next();
 }
 
+// ══════════════════════════════════════════════
+// SEGURANÇA — 2FA TOTP nativo (RFC 6238)
+// Compatível com Authy, Google e Microsoft Authenticator
+// ══════════════════════════════════════════════
+const B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+
+function b32encode(buf) {
+  let bits = 0, val = 0, out = "";
+  for (const b of buf) {
+    val = (val << 8) | b; bits += 8;
+    while (bits >= 5) { out += B32[(val >>> (bits - 5)) & 31]; bits -= 5; }
+  }
+  if (bits > 0) out += B32[(val << (5 - bits)) & 31];
+  return out;
+}
+
+function b32decode(str) {
+  str = String(str || "").toUpperCase().replace(/[^A-Z2-7]/g, "");
+  let bits = 0, val = 0; const out = [];
+  for (const c of str) {
+    val = (val << 5) | B32.indexOf(c); bits += 5;
+    if (bits >= 8) { out.push((val >>> (bits - 8)) & 255); bits -= 8; }
+  }
+  return Buffer.from(out);
+}
+
+function hotp(secretBuf, counter) {
+  const b = Buffer.alloc(8);
+  b.writeBigUInt64BE(BigInt(counter));
+  const h = crypto.createHmac("sha1", secretBuf).update(b).digest();
+  const o = h[h.length - 1] & 0xf;
+  const code = ((h[o] & 0x7f) << 24 | h[o + 1] << 16 | h[o + 2] << 8 | h[o + 3]) % 1e6;
+  return String(code).padStart(6, "0");
+}
+
+function totpVerify(secretB32, code, win = 1) {
+  code = String(code || "").replace(/\D/g, "");
+  if (!secretB32 || code.length !== 6) return false;
+  const sec = b32decode(secretB32);
+  const t = Math.floor(Date.now() / 30000);
+  for (let i = -win; i <= win; i++) {
+    if (crypto.timingSafeEqual(Buffer.from(hotp(sec, t + i)), Buffer.from(code))) return true;
+  }
+  return false;
+}
+
 
 // ══════════════════════════════════════════════
 // ONESIGNAL — Push Notifications
@@ -153,8 +204,8 @@ if (process.env.NODE_ENV !== "production" && db.users.all().length === 0) {
 
 function sanitizeUser(user) {
   if (!user) return null;
-  const { password_hash, ...rest } = user;
-  return { ...rest, trial: db.users.getTrialInfo(user) };
+  const { password_hash, totp_secret, totp_pending_secret, ...rest } = user;
+  return { ...rest, totp_enabled: !!user.totp_enabled, trial: db.users.getTrialInfo(user) };
 }
 
 // ── Body parsing ───────────────────────────────────────────────────────────────
@@ -320,19 +371,15 @@ app.get("/api/signals", requireAuthPersisted, (req, res) => {
 
 // ══════════════════════════════════════════════════════════════════
 // HISTÓRICO DE SINAIS — acessível por qualquer usuário autenticado
-// Retorna todos os sinais fechados (profit/loss/closed) do servidor
-// sem limite de trial, pois são dados públicos do grupo
 // ══════════════════════════════════════════════════════════════════
 app.get("/api/signals/history", requireAuthPersisted, (req, res) => {
   const all = db.signals.all();
 
-  // Todos os sinais encerrados — sem limite de trial
   const closed = all
     .filter(s => ["profit", "loss", "closed"].includes(s.status))
     .sort((a, b) => new Date(b.closed_at || b.updated_at || b.created_at)
                   - new Date(a.closed_at || a.updated_at || a.created_at));
 
-  // Métricas do mês atual
   const now      = new Date();
   const thisMonth = closed.filter(s => {
     const d = new Date(s.closed_at || s.updated_at || s.created_at);
@@ -371,7 +418,7 @@ app.post("/webhook/eduzz", eduzz.webhookHandler);
 // ══════════════════════════════════════════════
 // AUTH
 // ══════════════════════════════════════════════
-// ── ROTA DE DIAGNÓSTICO (v2.1: agora protegida por admin key) ─────────────────
+// ── ROTA DE DIAGNÓSTICO (protegida por admin key) ─────────────────────────────
 app.get("/api/debug/signals", requireAdmin, (req, res) => {
   const all     = db.signals.all();
   const active  = all.filter(s => s.status === "active");
@@ -403,6 +450,15 @@ app.post("/api/auth/login", (req, res) => {
     return res.status(403).json({ error:"subscription_expired", message:"Sua assinatura expirou." });
   }
 
+  // v2.2 — 2FA: se ativo, exige código do autenticador antes de criar sessão
+  if (user.totp_enabled) {
+    const code = String((req.body || {}).totp || "").trim();
+    if (!code)
+      return res.status(403).json({ error:"totp_required", message:"Conta protegida por 2FA — digite o código do seu app autenticador." });
+    if (!totpVerify(user.totp_secret, code))
+      return res.status(401).json({ error:"totp_invalid", message:"Código 2FA inválido. Confira o app autenticador." });
+  }
+
   const session = createSessionPersisted(user.id);
   setSessionCookiePersisted(res, session.id);
   res.json({ ok:true, user:{ email:user.email, name:user.name, plan:user.plan } });
@@ -429,6 +485,57 @@ app.post("/api/auth/change-password", requireAuthPersisted, (req, res) => {
     return res.status(400).json({ error:"weak_password", message:"Senha precisa de ao menos 6 caracteres." });
   db.users.update(req.user.id, { password_hash: auth.hashPassword(newPassword) });
   res.json({ ok:true });
+});
+
+// ══════════════════════════════════════════════
+// 2FA — ativação, confirmação e desativação (usuário logado)
+// ══════════════════════════════════════════════
+app.post("/api/auth/totp/setup", requireAuthPersisted, (req, res) => {
+  const user = res.locals.user;
+  if (user.totp_enabled)
+    return res.status(400).json({ error:"already_enabled", message:"2FA já está ativo nesta conta." });
+  const secret = b32encode(crypto.randomBytes(20));
+  db.users.update(user.id, { totp_pending_secret: secret });
+  const label = encodeURIComponent("ACS System:" + user.email);
+  res.json({
+    ok: true,
+    secret,
+    otpauth: `otpauth://totp/${label}?secret=${secret}&issuer=${encodeURIComponent("ACS System")}&digits=6&period=30`,
+  });
+});
+
+app.post("/api/auth/totp/confirm", requireAuthPersisted, (req, res) => {
+  const user = db.users.findById(res.locals.user.id);
+  if (!user.totp_pending_secret)
+    return res.status(400).json({ error:"no_setup", message:"Gere o código primeiro." });
+  if (!totpVerify(user.totp_pending_secret, (req.body || {}).code))
+    return res.status(401).json({ error:"invalid_code", message:"Código inválido. Confira o app autenticador." });
+  db.users.update(user.id, {
+    totp_secret: user.totp_pending_secret,
+    totp_enabled: true,
+    totp_pending_secret: null,
+  });
+  res.json({ ok: true });
+});
+
+app.post("/api/auth/totp/disable", requireAuthPersisted, (req, res) => {
+  const user = db.users.findById(res.locals.user.id);
+  if (!user.totp_enabled)
+    return res.status(400).json({ error:"not_enabled", message:"2FA não está ativo." });
+  if (!totpVerify(user.totp_secret, (req.body || {}).code))
+    return res.status(401).json({ error:"invalid_code", message:"Código inválido." });
+  db.users.update(user.id, { totp_enabled:false, totp_secret:null, totp_pending_secret:null });
+  res.json({ ok: true });
+});
+
+// ADMIN — reset de 2FA por URL (quem perdeu o celular):
+// abra no navegador: /api/admin/users/ID/totp-reset?key=SUA_ADMIN_KEY
+app.get("/api/admin/users/:id/totp-reset", requireAdmin, (req, res) => {
+  const u = db.users.update(Number(req.params.id), {
+    totp_enabled:false, totp_secret:null, totp_pending_secret:null,
+  });
+  if (!u) return res.status(404).json({ error:"not_found" });
+  res.json({ ok:true, message:"2FA desativado para " + u.email });
 });
 
 // ══════════════════════════════════════════════
@@ -706,8 +813,7 @@ app.get("/api/bybit/proxy", requireAdmin, async (req, res) => {
 app.get('/acs-scanner-pro.html', (req, res) => serveFile('acs-scanner-pro.html', res));
 
 // ══════════════════════════════════════════════════════════
-// COMUNIDADE v2.1 — autocontida (não depende do db.js)
-// Posts de imagem com fila de aprovação do admin
+// COMUNIDADE v2.2 — feed leve (imagens por URL com cache)
 // ══════════════════════════════════════════════════════════
 const fsCm = require("fs");
 const CM_DIR = process.env.DATA_DIR ||
@@ -728,15 +834,44 @@ function cmSave() {
 }
 
 const CM_IMG_RE = /^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/;
+const CM_PAGE   = 20;
 
-// Lista posts aprovados + pendentes do próprio usuário
+// v2.2: feed devolve metadados + URL da imagem (nunca o base64)
+function cmMeta(p, imgQS) {
+  const { image, ...meta } = p;
+  return { ...meta, image: "/api/community/img/" + p.id + (imgQS || "") };
+}
+
+// Lista posts aprovados + pendentes do próprio usuário (leve)
 app.get("/api/community/posts", requireAuthPersisted, (req, res) => {
   const user = res.locals.user;
   const all  = [...cmState.posts].sort((a, b) => b.id - a.id);
   res.json({
-    posts:     all.filter(p => p.status === "approved").slice(0, 50),
-    myPending: all.filter(p => p.status === "pending" && p.user_id === user.id),
+    posts:     all.filter(p => p.status === "approved").slice(0, CM_PAGE).map(p => cmMeta(p)),
+    myPending: all.filter(p => p.status === "pending" && p.user_id === user.id).map(p => cmMeta(p)),
   });
+});
+
+// v2.2: serve a imagem de um post com cache do navegador
+app.get("/api/community/img/:id", (req, res) => {
+  const post = cmState.posts.find(p => p.id === Number(req.params.id));
+  if (!post) return res.status(404).send("not found");
+
+  const cookies = parseCookiesPersisted(req);
+  const user    = getSessionPersisted(cookies[SESSION_COOKIE]);
+  const isAdmin = !!ADMIN_KEY &&
+    (req.query.key === ADMIN_KEY || req.headers["x-admin-key"] === ADMIN_KEY);
+  const ok = isAdmin ||
+    (user && user.status === "active" && (post.status === "approved" || post.user_id === user.id));
+  if (!ok) return res.status(401).send("unauthorized");
+
+  const m = /^data:(image\/[a-z+.-]+);base64,(.+)$/i.exec(post.image || "");
+  if (!m) return res.status(404).send("no image");
+  const buf = Buffer.from(m[2], "base64");
+  res.setHeader("Content-Type", m[1]);
+  res.setHeader("Content-Length", buf.length);
+  res.setHeader("Cache-Control", "private, max-age=2592000, immutable");
+  res.send(buf);
 });
 
 // Envia novo post — vai para fila de aprovação
@@ -768,9 +903,13 @@ app.post("/api/community/posts", requireAuthPersisted, (req, res) => {
   res.json({ ok: true, post: { id: post.id, status: post.status } });
 });
 
-// ADMIN — lista todos os posts (pending + approved + rejected)
+// ADMIN — lista todos os posts (URLs de imagem já com a key)
 app.get("/api/admin/community", requireAdmin, (req, res) => {
-  res.json({ posts: [...cmState.posts].sort((a, b) => b.id - a.id) });
+  const k = req.headers["x-admin-key"] || req.query.key;
+  res.json({
+    posts: [...cmState.posts].sort((a, b) => b.id - a.id)
+      .map(p => cmMeta(p, "?key=" + encodeURIComponent(k))),
+  });
 });
 
 // ADMIN — aprova ou rejeita post
@@ -782,7 +921,7 @@ app.patch("/api/admin/community/:id", requireAdmin, (req, res) => {
   if (!post) return res.status(404).json({ error: "not_found" });
   post.status = status;
   cmSave();
-  res.json({ ok: true, post });
+  res.json({ ok: true, post: cmMeta(post) });
 });
 
 // ADMIN — deleta post
@@ -884,7 +1023,6 @@ app.get("/login.css",    (req, res) => serveFile("login.css", res));
 app.get("/login.js",     (req, res) => serveFile("login.js", res));
 
 // v2.1: bloqueia arquivos sensíveis antes do static
-// (sem isso, /database.json e afins ficam públicos)
 const CM_BLOCKED = new Set([
   "/server.js", "/db.js", "/auth.js", "/eduzz.js",
   "/database.json", "/community_data.json",
@@ -987,9 +1125,9 @@ app.use(express.static(path.join(__dirname, "public")));
 })();
 
 app.listen(PORT, () => {
-  console.log(`\n🚀 ALFA CRIPTO SINAIS v2.1 rodando na porta ${PORT}`);
-  console.log(`   Preços reais:    /api/prices  (CoinGecko 30s cache)`);
-  console.log(`   Sinais admin:    /admin.html`);
+  console.log(`\n🚀 ALFA CRIPTO SINAIS v2.2 rodando na porta ${PORT}`);
+  console.log(`   Feed Comunidade: imagens por URL com cache`);
+  console.log(`   2FA TOTP:        ativo (Authy/Google Authenticator)`);
   console.log(`   Login:           /login.html\n`);
 });
 
