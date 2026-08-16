@@ -1,9 +1,14 @@
 /* ══════════════════════════════════════════════
-   server.js — ALFA CRIPTO SINAIS v2
+   server.js — ALFA CRIPTO SINAIS v2.1
    + Preços reais via CoinGecko
    + Signals persistidos no banco (CRUD admin)
    + Targets ativam automaticamente com preço real
    + Auth por email/senha · Webhook Eduzz
+   ── v2.1 ──
+   + Comunidade autocontida (posts com aprovação)
+   + Limite de body 4mb (upload de imagens)
+   + Rota Earn usando sessão persistida
+   + Bloqueio de arquivos sensíveis no static
    ══════════════════════════════════════════════ */
 
 require("dotenv").config();
@@ -153,7 +158,9 @@ function sanitizeUser(user) {
 }
 
 // ── Body parsing ───────────────────────────────────────────────────────────────
+// v2.1: limite 4mb para aceitar imagens da Comunidade (padrão era 100kb)
 app.use(express.json({
+  limit: "4mb",
   verify: (req, res, buf) => { req.rawBody = buf.toString("utf8"); },
 }));
 
@@ -700,52 +707,91 @@ app.get("/api/bybit/proxy", requireAdmin, async (req, res) => {
 app.get('/acs-scanner-pro.html', (req, res) => serveFile('acs-scanner-pro.html', res));
 
 // ══════════════════════════════════════════════════════════
-// COMUNIDADE — Posts de imagem com aprovação do admin
+// COMUNIDADE v2.1 — autocontida (não depende do db.js)
+// Posts de imagem com fila de aprovação do admin
 // ══════════════════════════════════════════════════════════
+const fsCm = require("fs");
+const CM_DIR = process.env.DATA_DIR ||
+  (process.env.DB_PATH ? path.dirname(process.env.DB_PATH) : __dirname);
+const CM_FILE = path.join(CM_DIR, "community_data.json");
 
-// Lista posts aprovados (usuário autenticado)
+let cmState = { posts: [], nextPost: 1 };
+try { cmState = Object.assign(cmState, JSON.parse(fsCm.readFileSync(CM_FILE, "utf8"))); } catch (_) {}
+
+let cmSaveTimer = null;
+function cmSave() {
+  clearTimeout(cmSaveTimer);
+  cmSaveTimer = setTimeout(() => {
+    fsCm.writeFile(CM_FILE, JSON.stringify(cmState), (err) => {
+      if (err) console.error("[comunidade] save:", err.message);
+    });
+  }, 400);
+}
+
+const CM_IMG_RE = /^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/;
+
+// Lista posts aprovados + pendentes do próprio usuário
 app.get("/api/community/posts", requireAuthPersisted, (req, res) => {
-  res.json({ posts: db.communityPosts.approved() });
+  const user = res.locals.user;
+  const all  = [...cmState.posts].sort((a, b) => b.id - a.id);
+  res.json({
+    posts:     all.filter(p => p.status === "approved").slice(0, 50),
+    myPending: all.filter(p => p.status === "pending" && p.user_id === user.id),
+  });
 });
 
 // Envia novo post — vai para fila de aprovação
 app.post("/api/community/posts", requireAuthPersisted, (req, res) => {
-  const user    = res.locals.user;
+  const user = res.locals.user;
   const { image, caption } = req.body || {};
-  if (!image)
+  if (!image || typeof image !== "string")
     return res.status(400).json({ error: "missing_image", message: "Envie uma imagem." });
-  if (image.length > 6 * 1024 * 1024)
-    return res.status(413).json({ error: "too_large", message: "Imagem muito grande. Máximo 5MB." });
+  if (image.length > 3_000_000)
+    return res.status(413).json({ error: "too_large", message: "Imagem muito grande." });
+  if (!CM_IMG_RE.test(image))
+    return res.status(400).json({ error: "invalid_image", message: "Formato de imagem inválido." });
 
-  const post = db.communityPosts.create({
-    user_id:   user.id,
-    user_name: user.name || user.email.split("@")[0],
+  const fila = cmState.posts.filter(p => p.status === "pending" && p.user_id === user.id).length;
+  if (fila >= 3)
+    return res.status(429).json({ error: "queue_full", message: "Você já tem 3 posts aguardando aprovação." });
+
+  const post = {
+    id:         cmState.nextPost++,
+    user_id:    user.id,
+    user_name:  user.name || user.email.split("@")[0],
     image,
-    caption,
-  });
+    caption:    String(caption || "").slice(0, 200),
+    status:     "pending",
+    created_at: new Date().toISOString(),
+  };
+  cmState.posts.push(post);
+  cmSave();
   res.json({ ok: true, post: { id: post.id, status: post.status } });
 });
 
 // ADMIN — lista todos os posts (pending + approved + rejected)
 app.get("/api/admin/community", requireAdmin, (req, res) => {
-  res.json({ posts: db.communityPosts.all() });
+  res.json({ posts: [...cmState.posts].sort((a, b) => b.id - a.id) });
 });
 
 // ADMIN — aprova ou rejeita post
 app.patch("/api/admin/community/:id", requireAdmin, (req, res) => {
-  const id     = Number(req.params.id);
   const { status } = req.body || {};
   if (!["approved", "rejected"].includes(status))
     return res.status(400).json({ error: "invalid_status", message: "Status deve ser approved ou rejected." });
-  const post = db.communityPosts.update(id, { status });
+  const post = cmState.posts.find(p => p.id === Number(req.params.id));
   if (!post) return res.status(404).json({ error: "not_found" });
+  post.status = status;
+  cmSave();
   res.json({ ok: true, post });
 });
 
 // ADMIN — deleta post
 app.delete("/api/admin/community/:id", requireAdmin, (req, res) => {
-  const deleted = db.communityPosts.delete(Number(req.params.id));
-  res.json({ ok: deleted });
+  const before = cmState.posts.length;
+  cmState.posts = cmState.posts.filter(p => p.id !== Number(req.params.id));
+  cmSave();
+  res.json({ ok: cmState.posts.length < before });
 });
 
 
@@ -838,275 +884,6 @@ app.get("/style.css",    requirePageAuthPersisted, (req, res) => serveFile("styl
 app.get("/login.css",    (req, res) => serveFile("login.css", res));
 app.get("/login.js",     (req, res) => serveFile("login.js", res));
 
-// Serve estáticos da raiz + subpastas
-app.use(express.static(__dirname));
-app.use(express.static(path.join(__dirname, "public")));
-
-// ══════════════════════════════════════════════
-/* ═══════════════════════════════════════════════
-   RENDA PASSIVA — rotas Earn (versão embutida)
-   ═══════════════════════════════════════════════ */
-(function () {
-  const PROVIDERS = {
-    bybit: {
-      nome: "Bybit",
-      baseUrl: process.env.BYBIT_BASE_URL || "https://api.bybit.com",
-      refUrl: process.env.EARN_BYBIT_REF_URL || "https://www.bybit.com/earn",
-      categorias: ["FlexibleSaving", "OnChain"],
-    },
-  };
-  const TTL = 10 * 60 * 1000;
-  let cache = { at: 0, data: null };
-
-  const parseApr = (v) => {
-    if (v == null) return null;
-    const n = parseFloat(String(v).replace("%", "").trim());
-    if (!Number.isFinite(n)) return null;
-    return n <= 1 ? +(n * 100).toFixed(2) : +n.toFixed(2);
-  };
-
-  async function getJson(url) {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    if (data.retCode !== 0) throw new Error(data.retMsg || "retCode != 0");
-    return data.result;
-  }
-
-  async function fetchBybit(p) {
-    const out = [];
-    for (const categoria of p.categorias) {
-      try {
-        const result = await getJson(`${p.baseUrl}/v5/earn/product?category=${categoria}`);
-        for (const item of result?.list || []) {
-          if (item.status && item.status !== "Available") continue;
-          const apr = parseApr(item.estimateApr);
-          if (!apr || apr <= 0) continue;
-          out.push({
-            provider: "bybit",
-            providerNome: p.nome,
-            coin: String(item.coin || "").toUpperCase(),
-            tipo: categoria === "FlexibleSaving" ? "flexivel" : "onchain",
-            apr,
-            minimo: item.minStakeAmount ?? null,
-            prazoDias: item.duration ? Number(item.duration) : null,
-          });
-        }
-      } catch (_) { /* categoria falhou — segue */ }
-    }
-    return out;
-  }
-
-  function dedup(products) {
-    const best = new Map();
-    for (const pr of products) {
-      const k = `${pr.provider}:${pr.coin}:${pr.tipo}`;
-      if (!best.has(k) || best.get(k).apr < pr.apr) best.set(k, pr);
-    }
-    return [...best.values()].sort((a, b) => b.apr - a.apr);
-  }
-
-  app.get("/api/earn/products", auth.requireAuth, async (_req, res) => {
-    try {
-      if (cache.data && Date.now() - cache.at < TTL) return res.json(cache.data);
-      const products = dedup(await fetchBybit(PROVIDERS.bybit));
-      if (!products.length && cache.data) return res.json(cache.data);
-      if (!products.length)
-        return res.status(502).json({ error: "upstream", message: "Não consegui consultar os produtos agora." });
-      const payload = {
-        updatedAt: new Date().toISOString(),
-        providers: Object.fromEntries(
-          Object.entries(PROVIDERS).map(([k, v]) => [k, { nome: v.nome, refUrl: v.refUrl }])
-        ),
-        products,
-      };
-      cache = { at: Date.now(), data: payload };
-      res.json(payload);
-    } catch (e) {
-      if (cache.data) return res.json(cache.data);
-      res.status(502).json({ error: "upstream", message: "Não consegui consultar os produtos agora." });
-    }
-  });
-})();
-app.listen(PORT, () => {
-  console.log(`\n🚀 ALFA CRIPTO SINAIS v2 rodando na porta ${PORT}`);
-  console.log(`   Preços reais:    /api/prices  (CoinGecko 30s cache)`);
-  console.log(`   Sinais admin:    /admin.html`);
-  console.log(`   Login:           /login.html\n`);
-});
-
-setInterval(() => db.sessions.cleanExpired(), 60 * 60 * 1000).unref();
-/* ═══════════════════════════════════════════════════════════
-   ACS SYSTEM — Comunidade v3 (envio à prova de formulário)
-   Encontra a imagem em QUALQUER campo do form ou no preview.
-   ═══════════════════════════════════════════════════════════ */
-(function () {
-  "use strict";
-  console.log("[ACS] Comunidade v3 carregada");
-
-  let cmPosts = [];
-  let cmMeusPendentes = [];
-
-  const cmEsc = (s) =>
-    String(s ?? "").replace(/[&<>"']/g, (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-
-  /* Caça a imagem: 1) qualquer input de arquivo do form
-                    2) a própria imagem exibida no preview */
-  async function cmObterImagem() {
-    const form = document.getElementById("comForm") || document;
-    for (const inp of form.querySelectorAll('input[type="file"]')) {
-      if (inp.files && inp.files[0]) return inp.files[0];
-    }
-    const imgs = [...form.querySelectorAll("img")].reverse();
-    for (const im of imgs) {
-      const src = im.getAttribute("src") || "";
-      if (src.startsWith("data:image/")) return src;
-      if (src.startsWith("blob:")) {
-        try { return await fetch(src).then((r) => r.blob()); } catch (_) {}
-      }
-    }
-    return null;
-  }
-
-  /* Comprime File, Blob ou dataURL para JPEG ~1280px */
-  function cmComprimir(fonte) {
-    return new Promise((resolve, reject) => {
-      const isStr = typeof fonte === "string";
-      const url = isStr ? fonte : URL.createObjectURL(fonte);
-      const img = new Image();
-      img.onload = () => {
-        try {
-          if (!isStr) URL.revokeObjectURL(url);
-          const MAX = 1280;
-          const scale = Math.min(1, MAX / Math.max(img.width, img.height));
-          const canvas = document.createElement("canvas");
-          canvas.width = Math.round(img.width * scale);
-          canvas.height = Math.round(img.height * scale);
-          canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
-          resolve(canvas.toDataURL("image/jpeg", 0.82));
-        } catch (e) { reject(e); }
-      };
-      img.onerror = () => { if (!isStr) URL.revokeObjectURL(url); reject(new Error("decode")); };
-      img.src = url;
-    });
-  }
-
-  const cmLerDireto = (blob) =>
-    new Promise((resolve, reject) => {
-      const r = new FileReader();
-      r.onload = (e) => resolve(e.target.result);
-      r.onerror = () => reject(new Error("read"));
-      r.readAsDataURL(blob);
-    });
-
-  window.enviarPost = async function () {
-    const form = document.getElementById("comForm") || document;
-    const btn =
-      document.getElementById("comSubmitBtn") ||
-      form.querySelector(".com-submit-btn, button[onclick*='enviarPost']");
-
-    const fonte = await cmObterImagem();
-    if (!fonte) {
-      alert("Não encontrei nenhuma imagem selecionada — toque em Foto/Imagem ou Arquivo, escolha o print do resultado e tente de novo.");
-      return;
-    }
-
-    if (btn) { btn.disabled = true; btn.textContent = "Enviando..."; }
-    try {
-      let image;
-      try {
-        image = await cmComprimir(fonte);
-      } catch (_) {
-        if (typeof fonte === "string" && /^data:image\/(png|jpe?g|webp)/.test(fonte) && fonte.length <= 2_500_000) {
-          image = fonte;
-        } else if (typeof fonte !== "string" && /image\/(png|jpe?g|webp)/.test(fonte.type || "") && fonte.size <= 2_500_000) {
-          image = await cmLerDireto(fonte);
-        } else {
-          throw new Error("Não consegui processar essa imagem. Envie em JPG ou PNG — um print da tela resolve.");
-        }
-      }
-
-      const capEl = document.getElementById("comCaption") || form.querySelector("textarea");
-      const caption = (capEl && capEl.value ? capEl.value : "").trim();
-
-      const res = await fetch("/api/community/posts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ caption, image }),
-      });
-      if (res.status === 404)
-        throw new Error("O servidor da Comunidade não está no ar — falta o bloco do passo 1 no server.js.");
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.message || "Tente novamente.");
-
-      // Limpa e fecha
-      for (const inp of form.querySelectorAll('input[type="file"]')) inp.value = "";
-      if (capEl) capEl.value = "";
-      const f = document.getElementById("comForm");
-      if (f) f.style.display = "none";
-
-      await window.loadComunidade();
-      alert("✅ Enviado! Seu post fica como \"aguardando aprovação\" até o admin liberar.");
-    } catch (e) {
-      alert("Erro: " + e.message);
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = "Enviar para aprovação"; }
-    }
-  };
-
-  function cmPostHtml(p, pendente) {
-    const nome = cmEsc(p.user_name || "Membro");
-    const initial = (nome.charAt(0) || "M").toUpperCase();
-    const dt = p.created_at
-      ? new Date(p.created_at).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit" })
-      : "";
-    const badge = pendente ? ' <span class="com-pending-badge">AGUARDANDO APROVAÇÃO</span>' : "";
-    const caption = p.caption ? '<div class="com-post-caption">' + cmEsc(p.caption) + "</div>" : "";
-    return '<div class="com-post">' +
-      '<div class="com-post-header">' +
-        '<div class="com-avatar">' + initial + "</div>" +
-        '<div><div class="com-user-name">' + nome + badge + "</div>" +
-        '<div class="com-post-date">' + dt + "</div></div>" +
-      "</div>" +
-      '<img class="com-post-img" src="' + cmEsc(p.image) + '" alt=""/>' +
-      caption +
-    "</div>";
-  }
-
-  window.renderComunidadeFeed = function () {
-    const feed = document.getElementById("comunidadeFeed");
-    if (!feed) return;
-    if (!cmPosts.length && !cmMeusPendentes.length) {
-      feed.innerHTML =
-        '<div class="empty-state"><div class="empty-icon">📸</div><div class="empty-title">Nenhum post ainda</div><div class="empty-sub">Seja o primeiro a compartilhar seu resultado!</div></div>';
-      return;
-    }
-    feed.innerHTML =
-      cmMeusPendentes.map((p) => cmPostHtml(p, true)).join("") +
-      cmPosts.map((p) => cmPostHtml(p, false)).join("");
-  };
-
-  window.loadComunidade = async function () {
-    const feed = document.getElementById("comunidadeFeed");
-    if (!feed) return;
-    try {
-      const res = await fetch("/api/community/posts");
-      if (res.status === 404) throw new Error("backend_off");
-      if (!res.ok) throw new Error("http");
-      const data = await res.json();
-      cmPosts = data.posts || [];
-      cmMeusPendentes = data.myPending || [];
-      window.renderComunidadeFeed();
-    } catch (e) {
-      feed.innerHTML = e.message === "backend_off"
-        ? '<div class="empty-state"><div class="empty-icon">🔌</div><div class="empty-sub">O servidor da Comunidade ainda não está no ar — falta o bloco do passo 1 no server.js.</div></div>'
-        : '<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-sub">Erro ao carregar. Tente de novo.</div></div>';
-    }
-  };
-
-  document.addEventListener("click", (e) => {
-    if (e.target.closest('[data-tab="comunidade"]'))
-      setTimeout(() => window.loadComunidade(), 0);
-  }, true);
-})();
+// v2.1: bloqueia arquivos sensíveis antes do static
+// (sem isso, /database.json e afins ficam públicos)
+const CM_BLOCKED = new Set([
