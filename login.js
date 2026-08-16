@@ -65,17 +65,18 @@ form?.addEventListener("submit", async (e) => {
   } catch {}
 })();
 /* ═══════════════════════════════════════════════════════════
-   ACS SYSTEM — LOGIN+ v1 (auto-instalável)
-   • "Fale com o suporte" → WhatsApp direto
-   • Número do suporte visível e clicável
+   ACS SYSTEM — LOGIN+ v1.1 (auto-instalável)
+   • "Fale com o suporte" → WhatsApp direto (com email digitado)
    • "Esqueci a senha" com redefinição assistida via WhatsApp
+   (v1.1: removida a linha visível com o número)
    Colar no FINAL do login.js. Reverter = apagar o bloco.
    ═══════════════════════════════════════════════════════════ */
 (function () {
   "use strict";
-  var ZAP = "5575988209055";
-  var ZAP_FMT = "+55 75 98820-9055";
+  if (window.__acsLoginPlus) return;
+  window.__acsLoginPlus = true;
 
+  var ZAP = "5575988209055";
   var wa = function (msg) {
     return "https://wa.me/" + ZAP + "?text=" + encodeURIComponent(msg);
   };
@@ -90,8 +91,6 @@ form?.addEventListener("submit", async (e) => {
   function abrirZap(msg) { window.open(wa(msg), "_blank", "noopener"); }
 
   function boot() {
-    if (document.getElementById("acsLoginPlus")) return;
-
     /* ---------- 1) "Fale com o suporte" → WhatsApp ---------- */
     var suporteLink = null;
     Array.prototype.forEach.call(document.querySelectorAll("a"), function (a) {
@@ -106,22 +105,9 @@ form?.addEventListener("submit", async (e) => {
         });
       }
     });
-
-    /* ---------- 2) Número visível e clicável ---------- */
-    var num = document.createElement("div");
-    num.id = "acsLoginPlus";
-    num.style.cssText = "text-align:center;margin-top:10px;font-size:13px;";
-    num.innerHTML =
-      '<a href="#" id="acsZapNum" style="color:#25D366;text-decoration:none;font-weight:700">' +
-      "📱 Suporte WhatsApp: " + ZAP_FMT + "</a>";
     var anchorHost = suporteLink ? (suporteLink.closest("div,p") || suporteLink.parentElement) : null;
-    (anchorHost || document.body).insertAdjacentElement(anchorHost ? "afterend" : "beforeend", num);
-    document.getElementById("acsZapNum").addEventListener("click", function (e) {
-      e.preventDefault();
-      abrirZap("Olá! Preciso de ajuda com o ACS System.");
-    });
 
-    /* ---------- 3) Link "Esqueci a senha" ---------- */
+    /* ---------- 2) Link "Esqueci a senha" ---------- */
     var btnEntrar = Array.prototype.slice.call(document.querySelectorAll("button"))
       .filter(function (b) { return /entrar/i.test(b.textContent || ""); })[0];
 
@@ -130,9 +116,10 @@ form?.addEventListener("submit", async (e) => {
     esq.innerHTML =
       '<a href="#" id="acsEsqueci" style="color:#8fa3b8;font-size:13px;text-decoration:underline;cursor:pointer">Esqueci a senha</a>';
     if (btnEntrar) btnEntrar.insertAdjacentElement("afterend", esq);
-    else (anchorHost || document.body).insertAdjacentElement("beforebegin", esq);
+    else if (anchorHost) anchorHost.insertAdjacentElement("beforebegin", esq);
+    else document.body.appendChild(esq);
 
-    /* ---------- 4) Modal de redefinição ---------- */
+    /* ---------- 3) Modal de redefinição ---------- */
     var ov = document.createElement("div");
     ov.id = "acsResetOv";
     ov.style.cssText =
