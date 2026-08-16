@@ -2364,3 +2364,173 @@ body.theme-day .rp-card, body.theme-day .rp-how, body.theme-day .rp-disclaimer {
     rpInstall();
   }
 })();
+/* ═══════════════════════════════════════════════════════════
+   ACS SYSTEM — Comunidade v3 (envio à prova de formulário)
+   Encontra a imagem em QUALQUER campo do form ou no preview.
+   ═══════════════════════════════════════════════════════════ */
+(function () {
+  "use strict";
+  console.log("[ACS] Comunidade v3 carregada");
+
+  let cmPosts = [];
+  let cmMeusPendentes = [];
+
+  const cmEsc = (s) =>
+    String(s ?? "").replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  async function cmObterImagem() {
+    const form = document.getElementById("comForm") || document;
+    for (const inp of form.querySelectorAll('input[type="file"]')) {
+      if (inp.files && inp.files[0]) return inp.files[0];
+    }
+    const imgs = [...form.querySelectorAll("img")].reverse();
+    for (const im of imgs) {
+      const src = im.getAttribute("src") || "";
+      if (src.startsWith("data:image/")) return src;
+      if (src.startsWith("blob:")) {
+        try { return await fetch(src).then((r) => r.blob()); } catch (_) {}
+      }
+    }
+    return null;
+  }
+
+  function cmComprimir(fonte) {
+    return new Promise((resolve, reject) => {
+      const isStr = typeof fonte === "string";
+      const url = isStr ? fonte : URL.createObjectURL(fonte);
+      const img = new Image();
+      img.onload = () => {
+        try {
+          if (!isStr) URL.revokeObjectURL(url);
+          const MAX = 1280;
+          const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.round(img.width * scale);
+          canvas.height = Math.round(img.height * scale);
+          canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL("image/jpeg", 0.82));
+        } catch (e) { reject(e); }
+      };
+      img.onerror = () => { if (!isStr) URL.revokeObjectURL(url); reject(new Error("decode")); };
+      img.src = url;
+    });
+  }
+
+  const cmLerDireto = (blob) =>
+    new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = (e) => resolve(e.target.result);
+      r.onerror = () => reject(new Error("read"));
+      r.readAsDataURL(blob);
+    });
+
+  window.enviarPost = async function () {
+    const form = document.getElementById("comForm") || document;
+    const btn =
+      document.getElementById("comSubmitBtn") ||
+      form.querySelector(".com-submit-btn, button[onclick*='enviarPost']");
+
+    const fonte = await cmObterImagem();
+    if (!fonte) {
+      alert("Não encontrei nenhuma imagem selecionada — toque em Foto/Imagem ou Arquivo, escolha o print do resultado e tente de novo.");
+      return;
+    }
+
+    if (btn) { btn.disabled = true; btn.textContent = "Enviando..."; }
+    try {
+      let image;
+      try {
+        image = await cmComprimir(fonte);
+      } catch (_) {
+        if (typeof fonte === "string" && /^data:image\/(png|jpe?g|webp)/.test(fonte) && fonte.length <= 2_500_000) {
+          image = fonte;
+        } else if (typeof fonte !== "string" && /image\/(png|jpe?g|webp)/.test(fonte.type || "") && fonte.size <= 2_500_000) {
+          image = await cmLerDireto(fonte);
+        } else {
+          throw new Error("Não consegui processar essa imagem. Envie em JPG ou PNG — um print da tela resolve.");
+        }
+      }
+
+      const capEl = document.getElementById("comCaption") || form.querySelector("textarea");
+      const caption = (capEl && capEl.value ? capEl.value : "").trim();
+
+      const res = await fetch("/api/community/posts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ caption, image }),
+      });
+      if (res.status === 404)
+        throw new Error("O servidor da Comunidade não está no ar — o server.js v2.1 ainda não foi deployado.");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || "Tente novamente.");
+
+      for (const inp of form.querySelectorAll('input[type="file"]')) inp.value = "";
+      if (capEl) capEl.value = "";
+      const f = document.getElementById("comForm");
+      if (f) f.style.display = "none";
+
+      await window.loadComunidade();
+      alert("✅ Enviado! Seu post fica como \"aguardando aprovação\" até o admin liberar.");
+    } catch (e) {
+      alert("Erro: " + e.message);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = "Enviar para aprovação"; }
+    }
+  };
+
+  function cmPostHtml(p, pendente) {
+    const nome = cmEsc(p.user_name || "Membro");
+    const initial = (nome.charAt(0) || "M").toUpperCase();
+    const dt = p.created_at
+      ? new Date(p.created_at).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit" })
+      : "";
+    const badge = pendente ? ' <span class="com-pending-badge">AGUARDANDO APROVAÇÃO</span>' : "";
+    const caption = p.caption ? '<div class="com-post-caption">' + cmEsc(p.caption) + "</div>" : "";
+    return '<div class="com-post">' +
+      '<div class="com-post-header">' +
+        '<div class="com-avatar">' + initial + "</div>" +
+        '<div><div class="com-user-name">' + nome + badge + "</div>" +
+        '<div class="com-post-date">' + dt + "</div></div>" +
+      "</div>" +
+      '<img class="com-post-img" src="' + cmEsc(p.image) + '" alt=""/>' +
+      caption +
+    "</div>";
+  }
+
+  window.renderComunidadeFeed = function () {
+    const feed = document.getElementById("comunidadeFeed");
+    if (!feed) return;
+    if (!cmPosts.length && !cmMeusPendentes.length) {
+      feed.innerHTML =
+        '<div class="empty-state"><div class="empty-icon">📸</div><div class="empty-title">Nenhum post ainda</div><div class="empty-sub">Seja o primeiro a compartilhar seu resultado!</div></div>';
+      return;
+    }
+    feed.innerHTML =
+      cmMeusPendentes.map((p) => cmPostHtml(p, true)).join("") +
+      cmPosts.map((p) => cmPostHtml(p, false)).join("");
+  };
+
+  window.loadComunidade = async function () {
+    const feed = document.getElementById("comunidadeFeed");
+    if (!feed) return;
+    try {
+      const res = await fetch("/api/community/posts");
+      if (res.status === 404) throw new Error("backend_off");
+      if (!res.ok) throw new Error("http");
+      const data = await res.json();
+      cmPosts = data.posts || [];
+      cmMeusPendentes = data.myPending || [];
+      window.renderComunidadeFeed();
+    } catch (e) {
+      feed.innerHTML = e.message === "backend_off"
+        ? '<div class="empty-state"><div class="empty-icon">🔌</div><div class="empty-sub">O servidor da Comunidade não está no ar — o server.js v2.1 ainda não foi deployado.</div></div>'
+        : '<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-sub">Erro ao carregar. Tente de novo.</div></div>';
+    }
+  };
+
+  document.addEventListener("click", (e) => {
+    if (e.target.closest('[data-tab="comunidade"]'))
+      setTimeout(() => window.loadComunidade(), 0);
+  }, true);
+})();
