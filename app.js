@@ -2535,16 +2535,15 @@ body.theme-day .rp-card, body.theme-day .rp-how, body.theme-day .rp-disclaimer {
   }, true);
 })();
 /* ═══════════════════════════════════════════════════════════
-   ACS SYSTEM — TEMA CLEAN v1 (auto-instalável)
-   Re-pinta o app inteiro sobrescrevendo as variáveis de tema:
-   verde menta suave, contrastes reduzidos, zero neon/glow,
-   tipografia Inter. Reverter = apagar este bloco.
+   ACS SYSTEM — TEMA CLEAN v1.1 (auto-instalável)
+   v1 + barra inferior corrigida (largura total, fundo integrado)
+   + fundo levemente recalibrado + scrollbar discreta.
+   Reverter = apagar este bloco.
    ═══════════════════════════════════════════════════════════ */
 (function () {
   "use strict";
   if (document.getElementById("acs-clean-theme")) return;
 
-  // Fonte Inter (leve, clean) — carregada uma vez
   const lk = document.createElement("link");
   lk.rel = "stylesheet";
   lk.href = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap";
@@ -2553,16 +2552,14 @@ body.theme-day .rp-card, body.theme-day .rp-how, body.theme-day .rp-disclaimer {
   const st = document.createElement("style");
   st.id = "acs-clean-theme";
   st.textContent = `
-/* ─── PALETA NOITE (padrão) ───
-   Ajuste fino: o tom de verde do app inteiro é a linha --green. */
 :root, body, body.theme-night {
-  --bg:        #0B0F0D !important;
-  --bg2:       #121714 !important;
-  --bg3:       #181F1B !important;
-  --border:    #1F2823 !important;
-  --border2:   #2A362F !important;
+  --bg:        #0C110E !important;
+  --bg2:       #141A16 !important;
+  --bg3:       #1A211C !important;
+  --border:    #212B25 !important;
+  --border2:   #2C3830 !important;
 
-  --green:     #3ECF8E !important;              /* <<< verde clean — troque aqui */
+  --green:     #3ECF8E !important;              /* <<< o verde do app — ajuste fino aqui */
   --green-dim: rgba(62,207,142,.09) !important;
   --green-bd:  rgba(62,207,142,.28) !important;
 
@@ -2584,7 +2581,6 @@ body.theme-day .rp-card, body.theme-day .rp-how, body.theme-day .rp-disclaimer {
   --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", monospace !important;
 }
 
-/* ─── PALETA DIA (tema claro do auto-theme) ─── */
 body.theme-day {
   --bg:        #F6F8F7 !important;
   --bg2:       #FFFFFF !important;
@@ -2602,27 +2598,45 @@ body.theme-day {
   --text4:     #86928B !important;
 }
 
-/* ─── DE-NEON GERAL ───
-   Remove brilhos e suaviza o peso visual sem tocar no layout. */
 * { text-shadow: none !important; }
 body { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
 
-/* Sombras verdes chapadas dos módulos viram profundidade sutil */
-.plano-card.plano-featured { box-shadow: 0 8px 24px rgba(0,0,0,.35) !important; }
-.plano-btn-premium, .rp-btn, .com-post-btn, .com-submit-btn {
-  box-shadow: none !important;
+/* Barra inferior: largura total, fundo integrado, ícones distribuídos */
+.acs-clean-nav {
+  left: 0 !important; right: 0 !important;
+  width: 100% !important; max-width: 100% !important;
+  display: flex !important; justify-content: space-around !important;
+  background: var(--bg2) !important;
+  border-top: 1px solid var(--border) !important;
+  border-radius: 0 !important;
+  box-shadow: 0 -8px 20px rgba(0,0,0,.28) !important;
+  padding: 8px 0 max(8px, env(safe-area-inset-bottom)) !important;
 }
+.acs-clean-nav .nav-btn { flex: 1; background: transparent !important; }
+
+/* Sombras verdes viram profundidade neutra */
+.plano-card.plano-featured { box-shadow: 0 8px 24px rgba(0,0,0,.35) !important; }
+.plano-btn-premium, .rp-btn, .com-post-btn, .com-submit-btn { box-shadow: none !important; }
 .plano-btn-premium:hover, .rp-btn:hover { transform: none !important; opacity: .88; }
 
-/* Tracking mais calmo nos rótulos dos módulos */
-.rp-badge, .rp-upd, .planos-trial-badge, .plano-period, .com-label {
-  letter-spacing: .4px !important;
-}
+.rp-badge, .rp-upd, .planos-trial-badge, .plano-period, .com-label { letter-spacing: .4px !important; }
+.rp-card, .com-post, .plano-card, .com-form-wrap, .rp-how, .rp-disclaimer { border-color: var(--border) !important; }
 
-/* Bordas dos cards um fio mais presentes que o fundo, nunca gritando */
-.rp-card, .com-post, .plano-card, .com-form-wrap, .rp-how, .rp-disclaimer {
-  border-color: var(--border) !important;
-}
+/* Scrollbar discreta (desktop) */
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
 `;
   document.head.appendChild(st);
+
+  // Adota a barra inferior (acha pelo botão, independe do nome da classe do container)
+  function adotarNav() {
+    const nav = document.querySelector(".nav-btn")?.parentElement;
+    if (nav) nav.classList.add("acs-clean-nav");
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", adotarNav);
+  } else {
+    adotarNav();
+  }
 })();
