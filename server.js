@@ -1125,7 +1125,205 @@ app.use(express.static(path.join(__dirname, "public")));
     }
   });
 })();
+/* ══════════════════════════════════════════════
+   FINANCEIRO v1 — ledger unificado Eduzz + Cakto
+   Webhook Cakto, sincronização de assinantes e
+   resumo de vendas/pagamentos para o admin.
+   ══════════════════════════════════════════════ */
+(function () {
+  const FIN_FILE = path.join(CM_DIR, "finance_data.json");
+  let fin = { payments: [], raw: [], nextId: 1 };
+  try { fin = Object.assign(fin, JSON.parse(fsCm.readFileSync(FIN_FILE, "utf8"))); } catch (_) {}
+  let finT = null;
+  const finSave = () => {
+    clearTimeout(finT);
+    finT = setTimeout(() => fsCm.writeFile(FIN_FILE, JSON.stringify(fin),
+      (e) => e && console.error("[financeiro] save:", e.message)), 400);
+  };
 
+  const pick = (o, paths) => {
+    for (const p of paths) {
+      const v = p.split(".").reduce((a, k) => (a && a[k] !== undefined ? a[k] : undefined), o);
+      if (v !== undefined && v !== null && v !== "") return v;
+    }
+    return null;
+  };
+
+  const toNum = (v) => {
+    if (v == null) return null;
+    const s = String(v);
+    let n = parseFloat(s.replace(/[^\d.,-]/g, "").replace(/\.(?=\d{3}(\D|$))/g, "").replace(",", "."));
+    if (!Number.isFinite(n)) return null;
+    // heurística: valor inteiro alto sem separador = centavos (ex: 49700 → 497.00)
+    if (n >= 3000 && Number.isInteger(n) && !/[.,]/.test(s)) n = n / 100;
+    return +n.toFixed(2);
+  };
+
+  function classify(evt) {
+    const e = String(evt ?? "").toLowerCase();
+    if (/aprov|paid|pag[oa]|renew|renov|complet/.test(e)) return "approved";
+    if (/reembol|refund|estorn/.test(e))                  return "refunded";
+    if (/chargeback|disputa/.test(e))                     return "chargeback";
+    if (/cancel/.test(e))                                 return "canceled";
+    if (/atras|overdue|past_due|late|vencid|inadimpl/.test(e)) return "overdue";
+    if (/pend|aguard|wait|gerad|created/.test(e))         return "pending";
+    return "other";
+  }
+
+  function planoDe(produto, amount) {
+    const p = String(produto ?? "").toLowerCase();
+    if (/anual|annual|12 ?m/.test(p))        return { plan: "Anual",     days: 365 };
+    if (/semestr|6 ?m/.test(p))              return { plan: "Semestral", days: 180 };
+    if (/trimestr|3 ?m/.test(p))             return { plan: "Trimestral", days: 90 };
+    if (/mensal|m[eê]s|month/.test(p))       return { plan: "Mensal",    days: 30 };
+    if (amount != null) {
+      if (amount >= 600) return { plan: "Anual",     days: 365 };
+      if (amount >= 400) return { plan: "Semestral", days: 180 };
+      return { plan: "Mensal", days: 30 };
+    }
+    return { plan: produto || "Assinatura", days: 365 };
+  }
+
+  function registrar({ source, event, email, name, product, amount, raw }) {
+    const status = classify(event);
+    email = String(email || "").toLowerCase().trim();
+    const { plan, days } = planoDe(product, amount);
+
+    const pay = {
+      id: fin.nextId++, source, event: String(event ?? ""), status,
+      email, name: name || "", plan, amount: amount ?? null,
+      at: new Date().toISOString(), note: "",
+    };
+
+    // espelho bruto p/ calibragem do adaptador (últimos 100)
+    try {
+      fin.raw.unshift({ at: pay.at, source, body: JSON.stringify(raw).slice(0, 3000) });
+      fin.raw = fin.raw.slice(0, 100);
+    } catch (_) {}
+
+    // sincroniza assinante
+    try {
+      if (email) {
+        let user = db.users.findByEmail(email);
+        if (status === "approved") {
+          const expires = new Date(Date.now() + (days + 3) * 864e5).toISOString(); // +3d carência
+          if (!user) {
+            const tempPass = crypto.randomBytes(4).toString("hex");
+            user = db.users.create({
+              email, name: name || email.split("@")[0],
+              password_hash: auth.hashPassword(tempPass), plan,
+            });
+            db.users.update(user.id, {
+              status: "active", expires_at: expires, payment_status: "em_dia",
+              origem: source, trial_started_at: null, trial_ends_at: null, trial_expired: false,
+            });
+            pay.note = "Conta criada — senha temporária: " + tempPass + " (envie ao cliente)";
+          } else {
+            db.users.update(user.id, {
+              status: "active", plan, expires_at: expires,
+              payment_status: "em_dia", origem: user.origem || source,
+            });
+          }
+        } else if (status === "overdue" && user) {
+          db.users.update(user.id, { payment_status: "atrasado" });
+        } else if (["canceled", "refunded", "chargeback"].includes(status) && user) {
+          db.users.update(user.id, { status: "inactive", payment_status: status });
+        }
+      }
+    } catch (e) { console.error("[financeiro] sync:", e.message); }
+
+    fin.payments.push(pay);
+    if (fin.payments.length > 5000) fin.payments = fin.payments.slice(-5000);
+    finSave();
+    return pay;
+  }
+
+  /* ---- WEBHOOK CAKTO ---- */
+  app.post("/webhook/cakto", (req, res) => {
+    const sec = process.env.CAKTO_WEBHOOK_SECRET;
+    const b = req.body || {};
+    if (sec && req.query.key !== sec && pick(b, ["secret", "token", "key"]) !== sec)
+      return res.status(401).json({ error: "unauthorized" });
+
+    registrar({
+      source: "cakto",
+      event: pick(b, ["event", "type", "event_type", "status", "data.status", "data.event"]),
+      email: pick(b, ["customer.email", "data.customer.email", "client.email", "buyer.email", "subscriber.email", "email"]),
+      name:  pick(b, ["customer.name", "data.customer.name", "client.name", "buyer.name", "subscriber.name", "name"]),
+      product: pick(b, ["product.name", "data.product.name", "offer.name", "data.offer.name", "item.name", "product_name", "plan.name"]),
+      amount: toNum(pick(b, ["amount", "data.amount", "value", "total", "price", "offer.price", "data.offer.price", "purchase.price"])),
+      raw: b,
+    });
+    res.json({ ok: true });
+  });
+
+  /* ---- GRAMPO EDUZZ (chamado pelo wrapper da rota) ---- */
+  global.__acsFinanceEduzz = function (req) {
+    let b = req.body;
+    if (!b || !Object.keys(b).length) {
+      try { b = JSON.parse(req.rawBody); }
+      catch (_) { b = require("querystring").parse(req.rawBody || ""); }
+    }
+    const stMap = { 1: "pending", 2: "pending", 3: "approved", 4: "refunded", 6: "canceled", 7: "chargeback" };
+    const rawSt = pick(b, ["trans_status", "status", "event", "type", "event_name"]);
+    const event = stMap[Number(rawSt)] || rawSt;
+    registrar({
+      source: "eduzz",
+      event,
+      email: pick(b, ["cus_email", "customer.email", "buyer_email", "email"]),
+      name:  pick(b, ["cus_name", "customer.name", "buyer_name", "name"]),
+      product: pick(b, ["product_name", "prod_name", "content_title", "product.name", "item_name"]),
+      amount: toNum(pick(b, ["trans_value", "trans_paid", "value", "amount", "price", "sale_value"])),
+      raw: b,
+    });
+  };
+
+  /* ---- RESUMO PARA O ADMIN ---- */
+  app.get("/api/admin/finance/summary", requireAdmin, (_req, res) => {
+    const now = new Date();
+    const mes = now.toISOString().slice(0, 7);
+    const doMes = fin.payments.filter((p) => p.at.slice(0, 7) === mes);
+    const soma = (arr) => +arr.reduce((a, p) => a + (p.amount || 0), 0).toFixed(2);
+
+    const aprovMes = doMes.filter((p) => p.status === "approved");
+    const reembMes = doMes.filter((p) => ["refunded", "chargeback"].includes(p.status));
+
+    const porFonte = {};
+    const porPlano = {};
+    for (const p of aprovMes) {
+      porFonte[p.source] = porFonte[p.source] || { qtd: 0, receita: 0 };
+      porFonte[p.source].qtd++; porFonte[p.source].receita = +(porFonte[p.source].receita + (p.amount || 0)).toFixed(2);
+      porPlano[p.plan] = porPlano[p.plan] || { qtd: 0, receita: 0 };
+      porPlano[p.plan].qtd++; porPlano[p.plan].receita = +(porPlano[p.plan].receita + (p.amount || 0)).toFixed(2);
+    }
+
+    const users = db.users.all().filter((u) => u.status !== "deleted");
+    const ativos = users.filter((u) => u.status === "active");
+    const vencido = (u) => u.expires_at && new Date(u.expires_at) < now;
+    const atrasados = ativos.filter((u) => u.payment_status === "atrasado" || vencido(u));
+    const venc7 = ativos.filter((u) => u.expires_at &&
+      new Date(u.expires_at) > now && new Date(u.expires_at) < new Date(Date.now() + 7 * 864e5));
+
+    res.json({
+      mes,
+      kpis: {
+        receitaMes: soma(aprovMes), vendasMes: aprovMes.length,
+        reembolsosMes: soma(reembMes), qtdReembolsosMes: reembMes.length,
+        receitaTotal: soma(fin.payments.filter((p) => p.status === "approved")),
+        ativos: ativos.length, atrasados: atrasados.length, vencendo7d: venc7.length,
+      },
+      porFonte, porPlano,
+      atrasadosList: atrasados.slice(0, 100).map((u) => ({
+        id: u.id, email: u.email, plan: u.plan, origem: u.origem || "—",
+        expires_at: u.expires_at || null,
+      })),
+      ultimos: fin.payments.slice(-40).reverse(),
+    });
+  });
+
+  // Espelho bruto p/ calibrar o adaptador: /api/admin/finance/raw?key=ADMIN_KEY
+  app.get("/api/admin/finance/raw", requireAdmin, (_req, res) => res.json({ raw: fin.raw }));
+})();
 app.listen(PORT, () => {
   console.log(`\n🚀 ALFA CRIPTO SINAIS v2.2 rodando na porta ${PORT}`);
   console.log(`   Feed Comunidade: imagens por URL com cache`);
