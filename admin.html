@@ -326,7 +326,111 @@ tr:hover td{background:rgba(0,255,136,.02);}
   }
 })();
 </script>
-  <body>
+ <!-- ═══ ACS · FINANCEIRO — aba integrada ao painel ═══ -->
+<script>
+(function () {
+  "use strict";
+  function boot() {
+    if (window.__acsFin) return;
+    const tabsBar = document.querySelector(".admin-tabs");
+    const panel = document.getElementById("panel");
+    if (!tabsBar || !panel) return;
+    window.__acsFin = true;
+
+    const st = document.createElement("style");
+    st.textContent = `.fx-y{background:rgba(255,204,0,.15);color:var(--yellow)}
+      .fx-src{font-family:"Share Tech Mono",monospace;font-size:10px;padding:2px 8px;border-radius:5px;background:rgba(0,200,255,.12);color:var(--blue)}
+      .fx-src.cakto{background:rgba(0,255,136,.12);color:var(--green)}`;
+    document.head.appendChild(st);
+
+    tabsBar.insertAdjacentHTML("beforeend",
+      '<button class="admin-tab" data-tab="financeiro">💰 Financeiro</button>');
+
+    panel.insertAdjacentHTML("beforeend", `
+      <div id="tab-financeiro" style="display:none">
+        <div class="stat-row">
+          <div class="stat-box"><div class="stat-val" id="fxRecMes">—</div><div class="stat-lbl">RECEITA DO MÊS</div></div>
+          <div class="stat-box"><div class="stat-val" id="fxVendas">—</div><div class="stat-lbl">VENDAS NO MÊS</div></div>
+          <div class="stat-box"><div class="stat-val" style="color:var(--red)" id="fxReemb">—</div><div class="stat-lbl">REEMBOLSOS MÊS</div></div>
+          <div class="stat-box"><div class="stat-val" id="fxTotal">—</div><div class="stat-lbl">RECEITA TOTAL</div></div>
+        </div>
+        <div class="stat-row">
+          <div class="stat-box"><div class="stat-val" id="fxAtivos">—</div><div class="stat-lbl">ASSINANTES ATIVOS</div></div>
+          <div class="stat-box"><div class="stat-val" style="color:var(--yellow)" id="fxAtras">—</div><div class="stat-lbl">EM ATRASO</div></div>
+          <div class="stat-box"><div class="stat-val" id="fxVenc7">—</div><div class="stat-lbl">VENCEM EM 7 DIAS</div></div>
+        </div>
+        <div class="toolbar">
+          <span class="mono" id="fxFontes" style="color:var(--text4)">—</span>
+          <button class="btn neutral sm" id="fxReload">↻</button>
+        </div>
+        <h3 style="font-size:14px;margin:6px 0 8px;color:var(--text4)">⚠️ EM ATRASO / VENCIDOS</h3>
+        <table><thead><tr><th>EMAIL</th><th>PLANO</th><th>ORIGEM</th><th>VENCEU EM</th><th></th></tr></thead>
+        <tbody id="fxAtrasBody"></tbody></table>
+        <h3 style="font-size:14px;margin:16px 0 8px;color:var(--text4)">ÚLTIMOS PAGAMENTOS</h3>
+        <table><thead><tr><th>DATA</th><th>FONTE</th><th>EMAIL</th><th>PLANO</th><th>VALOR</th><th>STATUS</th><th>OBS</th></tr></thead>
+        <tbody id="fxPayBody"></tbody></table>
+      </div>`);
+
+    const KEY = () => localStorage.getItem("alfa_admin_key") || "";
+    const money = (v) => v == null ? "—" : "R$ " + Number(v).toLocaleString("pt-BR", { minimumFractionDigits: 2 });
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+    async function carregar() {
+      const r = await fetch("/api/admin/finance/summary", { headers: { "x-admin-key": KEY() } });
+      if (!r.ok) return;
+      const d = await r.json();
+      fxRecMes.textContent = money(d.kpis.receitaMes);
+      fxVendas.textContent = d.kpis.vendasMes;
+      fxReemb.textContent  = money(d.kpis.reembolsosMes);
+      fxTotal.textContent  = money(d.kpis.receitaTotal);
+      fxAtivos.textContent = d.kpis.ativos;
+      fxAtras.textContent  = d.kpis.atrasados;
+      fxVenc7.textContent  = d.kpis.vencendo7d;
+
+      fxFontes.textContent = Object.entries(d.porFonte)
+        .map(([f, v]) => f.toUpperCase() + ": " + v.qtd + " vendas · " + money(v.receita)).join("   |   ") || "Sem vendas neste mês ainda";
+
+      fxAtrasBody.innerHTML = d.atrasadosList.length ? d.atrasadosList.map((u) => {
+        const dt = u.expires_at ? new Date(u.expires_at).toLocaleDateString("pt-BR") : "—";
+        const zap = "https://wa.me/?text=" + encodeURIComponent(
+          "Olá! Vi aqui que sua assinatura do ACS System precisa de atenção — posso te ajudar a regularizar?");
+        return "<tr><td>" + esc(u.email) + "</td><td>" + esc(u.plan || "—") + "</td><td class='mono'>" +
+          esc(u.origem) + "</td><td class='mono'>" + dt +
+          "</td><td><a class='btn sm' style='text-decoration:none' target='_blank' href='" + zap + "'>WhatsApp</a></td></tr>";
+      }).join("") : "<tr><td colspan='5'><div class='empty-state'>Ninguém em atraso. 🎉</div></td></tr>";
+
+      const stCls = { approved: "profit", refunded: "loss", chargeback: "loss", canceled: "closed", overdue: "fx-y", pending: "fx-y", other: "closed" };
+      fxPayBody.innerHTML = d.ultimos.length ? d.ultimos.map((p) =>
+        "<tr><td class='mono' style='font-size:10px'>" + new Date(p.at).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) +
+        "</td><td><span class='fx-src " + esc(p.source) + "'>" + esc(p.source.toUpperCase()) + "</span></td><td>" + esc(p.email || "—") +
+        "</td><td>" + esc(p.plan || "—") + "</td><td class='mono'>" + money(p.amount) +
+        "</td><td><span class='badge " + (stCls[p.status] || "closed") + "'>" + esc(p.status) + "</span></td>" +
+        "<td class='mono' style='font-size:10px;color:var(--yellow)'>" + esc(p.note || "") + "</td></tr>").join("")
+        : "<tr><td colspan='7'><div class='empty-state'>Nenhum evento ainda — configure o webhook e dispare um teste.</div></td></tr>";
+    }
+
+    document.addEventListener("click", (e) => {
+      const t = e.target.closest(".admin-tab");
+      if (!t) return;
+      const mine = document.getElementById("tab-financeiro");
+      if (t.dataset.tab === "financeiro") {
+        document.querySelectorAll(".admin-tab").forEach((b) => b.classList.toggle("active", b === t));
+        ["sinais", "precos", "usuarios", "webhook", "comunidade"].forEach((x) => {
+          const el = document.getElementById("tab-" + x);
+          if (el) el.style.display = "none";
+        });
+        mine.style.display = "";
+        carregar();
+      } else if (mine) mine.style.display = "none";
+    }, true);
+    document.getElementById("fxReload").addEventListener("click", carregar);
+    setInterval(() => { if (KEY() && document.getElementById("tab-financeiro").style.display !== "none") carregar(); }, 60000);
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
+  else boot();
+})();
+</script> <body>
 <!-- ══ GATE ══ -->
 <div id="gate" class="gate">
   <h1>🔐 ALFA ADMIN</h1>
