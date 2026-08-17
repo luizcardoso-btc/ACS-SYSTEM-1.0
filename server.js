@@ -413,8 +413,10 @@ app.get("/api/signals/history", requireAuthPersisted, (req, res) => {
 // ══════════════════════════════════════════════
 // WEBHOOK Eduzz
 // ══════════════════════════════════════════════
-app.post("/webhook/eduzz", eduzz.webhookHandler);
-
+app.post("/webhook/eduzz", (req, res) => {
+  try { if (global.__acsFinanceEduzz) global.__acsFinanceEduzz(req); } catch (_) {}
+  return eduzz.webhookHandler(req, res);
+});
 // ══════════════════════════════════════════════
 // AUTH
 // ══════════════════════════════════════════════
