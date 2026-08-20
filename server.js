@@ -1,19 +1,10 @@
 /* ══════════════════════════════════════════════
-   server.js — ALFA CRIPTO SINAIS v2.2
-   + Preços reais via CoinGecko
-   + Signals persistidos no banco (CRUD admin)
-   + Targets ativam automaticamente com preço real
-   + Auth por email/senha · Webhook Eduzz
-   ── v2.1 ──
-   + Comunidade autocontida (posts com aprovação)
-   + Limite de body 4mb · Rota Earn com sessão persistida
-   + Bloqueio de arquivos sensíveis no static
-   ── v2.2 ──
-   + Feed da Comunidade leve: imagens por URL com cache
-     (/api/community/img/:id) — JSON do feed sem base64
-   + 2FA TOTP nativo (Authy/Google/Microsoft Authenticator):
-     login em 2 etapas quando ativo, ativação via QR,
-     reset pelo admin por URL
+   server.js — ALFA CRIPTO SINAIS v2.3 (consolidado)
+   Base v2.2: feed Comunidade leve + 2FA TOTP nativo
+   + Exclusão de conta (App Store / Play Store / LGPD)
+   + Financeiro: ledger Eduzz + Cakto, resumo p/ admin
+   + Webhook Eduzz v2 (Developer Hub, x-signature)
+   + Paper Trading v2 (Comitê — rastreio top 500 CoinGecko)
    ══════════════════════════════════════════════ */
 
 require("dotenv").config();
@@ -29,8 +20,7 @@ const API_KEY   = process.env.ANTHROPIC_API_KEY;
 const ADMIN_KEY = process.env.ADMIN_KEY;
 
 // ══════════════════════════════════════════════════════════════════
-// SESSÕES PERSISTIDAS — substitui Map em memória do auth.js
-// Garante que sessões sobrevivem a redeploys do Railway
+// SESSÕES PERSISTIDAS
 // ══════════════════════════════════════════════════════════════════
 const crypto  = require("crypto");
 const SESSION_COOKIE = "acs_session";
@@ -96,7 +86,6 @@ function requirePageAuthPersisted(req, res, next) {
 
 // ══════════════════════════════════════════════
 // SEGURANÇA — 2FA TOTP nativo (RFC 6238)
-// Compatível com Authy, Google e Microsoft Authenticator
 // ══════════════════════════════════════════════
 const B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
@@ -140,7 +129,6 @@ function totpVerify(secretB32, code, win = 1) {
   return false;
 }
 
-
 // ══════════════════════════════════════════════
 // ONESIGNAL — Push Notifications
 // ══════════════════════════════════════════════
@@ -161,12 +149,12 @@ async function sendPushNotification({ title, message, url = "/" }) {
       },
       body: JSON.stringify({
         app_id:             ONESIGNAL_APP_ID,
-        included_segments:  ["All"],          // envia para todos os assinantes
+        included_segments:  ["All"],
         headings:           { pt: title,   en: title   },
         contents:           { pt: message, en: message },
         url:                process.env.APP_URL ? process.env.APP_URL + url : url,
         chrome_web_icon:    process.env.APP_URL ? process.env.APP_URL + "/icon-192.png" : "",
-        priority:           10,               // alta prioridade
+        priority:           10,
       }),
     });
     const data = await res.json();
@@ -177,7 +165,6 @@ async function sendPushNotification({ title, message, url = "/" }) {
     console.error("OneSignal fetch erro:", err.message);
   }
 }
-
 
 if (!API_KEY) {
   console.warn("\n⚠️  ANTHROPIC_API_KEY não encontrada — chat IA desativado\n");
@@ -209,15 +196,13 @@ function sanitizeUser(user) {
 }
 
 // ── Body parsing ───────────────────────────────────────────────────────────────
-// v2.1: limite 4mb para aceitar imagens da Comunidade (padrão era 100kb)
 app.use(express.json({
   limit: "4mb",
   verify: (req, res, buf) => { req.rawBody = buf.toString("utf8"); },
 }));
 
 // ══════════════════════════════════════════════
-// PREÇOS EM TEMPO REAL — CoinGecko (grátis, sem API key)
-// Cache de 30s para não bater limite de rate
+// PREÇOS EM TEMPO REAL — CoinGecko
 // ══════════════════════════════════════════════
 let priceCache = { data: null, fetchedAt: 0 };
 
@@ -231,7 +216,6 @@ const COINGECKO_IDS = [
 
 async function fetchPrices() {
   const now = Date.now();
-  // Cache de 30 segundos
   if (priceCache.data && now - priceCache.fetchedAt < 30_000) {
     return priceCache.data;
   }
@@ -246,7 +230,6 @@ async function fetchPrices() {
     if (!resp.ok) throw new Error(`CoinGecko HTTP ${resp.status}`);
     const raw = await resp.json();
 
-    // Normaliza para { "BTC/USDT": { price, change24h }, ... }
     const MAP = {
       "bitcoin":              "BTC/USDT",
       "ethereum":             "ETH/USDT",
@@ -283,7 +266,6 @@ async function fetchPrices() {
     return prices;
   } catch (err) {
     console.error("⚠️  CoinGecko erro:", err.message);
-    // Retorna cache antigo se existir, ou null
     return priceCache.data || null;
   }
 }
@@ -302,7 +284,6 @@ async function checkSignalTargets() {
     const updated   = db.signals.checkTargets(sig.id, priceObj.price);
     if (!updated) continue;
 
-    // Novo alvo atingido
     if (updated.hit > hitBefore) {
       const alvoVal = (updated.targets || [])[updated.hit - 1] || "?";
       sendPushNotification({
@@ -311,7 +292,6 @@ async function checkSignalTargets() {
         url:     "/",
       });
     }
-    // Sinal fechou com lucro automático
     if (updated.status === "profit" && sig.status === "active") {
       sendPushNotification({
         title:   `✅ Lucro confirmado — ${sig.pair}`,
@@ -341,16 +321,12 @@ app.get("/api/signals", requireAuthPersisted, (req, res) => {
   const trial      = db.users.getTrialInfo(user);
   const allSignals = db.signals.all();
 
-  // Sinais ativos — NUNCA limitados por trial (usuário precisa ver os sinais abertos)
   const activeSignals = allSignals.filter(s => s.status === "active");
 
-  // Sinais fechados — limitados para trial expirado
   let closedSignals  = allSignals.filter(s => s.status !== "active");
   let limitApplied   = false;
 
   if (trial.isExpired && trial.signalLimit !== null) {
-    // Trial expirado: limita apenas os sinais fechados visíveis
-    // Os sinais ATIVOS sempre aparecem (são o coração do produto)
     closedSignals = closedSignals.slice(0, trial.signalLimit);
     limitApplied  = true;
   }
@@ -370,7 +346,7 @@ app.get("/api/signals", requireAuthPersisted, (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════
-// HISTÓRICO DE SINAIS — acessível por qualquer usuário autenticado
+// HISTÓRICO DE SINAIS
 // ══════════════════════════════════════════════════════════════════
 app.get("/api/signals/history", requireAuthPersisted, (req, res) => {
   const all = db.signals.all();
@@ -408,15 +384,14 @@ app.get("/api/signals/history", requireAuthPersisted, (req, res) => {
   });
 });
 
-
-
 // ══════════════════════════════════════════════
-// WEBHOOK Eduzz
+// WEBHOOK Eduzz (legado + grampo do Financeiro)
 // ══════════════════════════════════════════════
 app.post("/webhook/eduzz", (req, res) => {
   try { if (global.__acsFinanceEduzz) global.__acsFinanceEduzz(req); } catch (_) {}
   return eduzz.webhookHandler(req, res);
 });
+
 // ══════════════════════════════════════════════
 // AUTH
 // ══════════════════════════════════════════════
@@ -433,7 +408,6 @@ app.get("/api/debug/signals", requireAdmin, (req, res) => {
     uptime:   Math.floor(process.uptime()) + "s",
   });
 });
-
 
 app.post("/api/auth/login", (req, res) => {
   const { email, password } = req.body || {};
@@ -452,7 +426,7 @@ app.post("/api/auth/login", (req, res) => {
     return res.status(403).json({ error:"subscription_expired", message:"Sua assinatura expirou." });
   }
 
-  // v2.2 — 2FA: se ativo, exige código do autenticador antes de criar sessão
+  // 2FA: se ativo, exige código do autenticador antes de criar sessão
   if (user.totp_enabled) {
     const code = String((req.body || {}).totp || "").trim();
     if (!code)
@@ -490,7 +464,7 @@ app.post("/api/auth/change-password", requireAuthPersisted, (req, res) => {
 });
 
 // ══════════════════════════════════════════════
-// 2FA — ativação, confirmação e desativação (usuário logado)
+// 2FA — ativação, confirmação e desativação
 // ══════════════════════════════════════════════
 app.post("/api/auth/totp/setup", requireAuthPersisted, (req, res) => {
   const user = res.locals.user;
@@ -530,8 +504,8 @@ app.post("/api/auth/totp/disable", requireAuthPersisted, (req, res) => {
   res.json({ ok: true });
 });
 
-// ADMIN — reset de 2FA por URL (quem perdeu o celular):
-// abra no navegador: /api/admin/users/ID/totp-reset?key=SUA_ADMIN_KEY
+// ADMIN — reset de 2FA por URL:
+// /api/admin/users/ID/totp-reset?key=SUA_ADMIN_KEY
 app.get("/api/admin/users/:id/totp-reset", requireAdmin, (req, res) => {
   const u = db.users.update(Number(req.params.id), {
     totp_enabled:false, totp_secret:null, totp_pending_secret:null,
@@ -543,17 +517,13 @@ app.get("/api/admin/users/:id/totp-reset", requireAdmin, (req, res) => {
 // ══════════════════════════════════════════════
 // ADMIN — Usuários
 // ══════════════════════════════════════════════
-
-// Rota pública que valida admin key — sem requireAdmin middleware
 app.get("/api/admin/ping", (req, res) => {
   const key = req.headers["x-admin-key"] || req.query.key || "";
   const ok  = key && key === process.env.ADMIN_KEY;
   res.json({ ok, ts: Date.now() });
 });
 
-// Rota pública de health check
 app.get("/health", (req, res) => res.json({ status:"ok", ts: Date.now() }));
-
 
 // ── PLANOS E TRIAL ────────────────────────────────────────────────
 const PLANS = [
@@ -592,7 +562,6 @@ const PLANS = [
   },
 ];
 
-// Info dos planos — pública (usada pelo modal de upgrade no app)
 app.get("/api/plans", (req, res) => {
   res.json({
     trial: {
@@ -603,11 +572,9 @@ app.get("/api/plans", (req, res) => {
   });
 });
 
-// Status do trial do usuário logado
 app.get("/api/trial/status", requireAuthPersisted, (req, res) => {
   res.json(db.users.getTrialInfo(res.locals.user));
 });
-
 
 app.get("/api/admin/users", requireAdmin, (req, res) => {
   res.json({ users: db.users.all().map(sanitizeUser) });
@@ -621,9 +588,7 @@ app.post("/api/admin/users", requireAdmin, (req, res) => {
   if (db.users.findByEmail(norm))
     return res.status(409).json({ error:"already_exists", message:"Já existe assinante com este email." });
   const hash = auth.hashPassword(password);
-  // Admin cria com plano definido — trial não se aplica
   const user = db.users.create({ email:norm, password_hash:hash, name, plan: plan || "trial" });
-  // Se veio com plano pago, limpa campos de trial
   if (plan && plan !== "trial") {
     db.users.update(user.id, { trial_started_at: null, trial_ends_at: null, trial_expired: false });
   }
@@ -637,7 +602,6 @@ app.patch("/api/admin/users/:id", requireAdmin, (req, res) => {
   if (status      !== undefined) patch.status      = status;
   if (plan        !== undefined) {
     patch.plan = plan;
-    // Se admin definindo plano pago, limpa trial
     if (plan && plan !== "trial") {
       patch.trial_ends_at  = null;
       patch.trial_expired  = false;
@@ -658,13 +622,10 @@ app.get("/api/admin/webhook-log", requireAdmin, (req, res) => {
 // ══════════════════════════════════════════════
 // ADMIN — Sinais (CRUD completo)
 // ══════════════════════════════════════════════
-
-// Listar todos
 app.get("/api/admin/signals", requireAdmin, (req, res) => {
   res.json({ signals: db.signals.all() });
 });
 
-// Criar sinal
 app.post("/api/admin/signals", requireAdmin, (req, res) => {
   const { pair, type, entry, leverage, stoploss, targets, reason, timeframe, setup, confidence, source } = req.body || {};
   if (!pair || !entry)
@@ -672,7 +633,6 @@ app.post("/api/admin/signals", requireAdmin, (req, res) => {
 
   const sig = db.signals.create({ pair, type, entry, leverage, stoploss, targets, reason, timeframe, setup, confidence, source: source || "admin" });
 
-  // 📲 Push notification para todos os membros
   const tipoBr   = (type === "SHORT") ? "🔴 VENDA" : "🟢 COMPRA";
   const alvosStr = (targets || []).slice(0, 3).join(" · ");
   sendPushNotification({
@@ -684,7 +644,6 @@ app.post("/api/admin/signals", requireAdmin, (req, res) => {
   res.json({ ok:true, signal:sig });
 });
 
-// Editar sinal
 app.patch("/api/admin/signals/:id", requireAdmin, (req, res) => {
   const id = Number(req.params.id);
   const allowed = ["pair","type","entry","leverage","stoploss","targets","reason","timeframe","setup","confidence","status","hit","profit_pct","result_pct","time_to_hit","closed_at"];
@@ -692,7 +651,6 @@ app.patch("/api/admin/signals/:id", requireAdmin, (req, res) => {
   for (const k of allowed) {
     if (req.body[k] !== undefined) patch[k] = req.body[k];
   }
-  // Grava closed_at automaticamente se status muda para fechado
   if (patch.status && ["profit","loss","closed"].includes(patch.status) && !patch.closed_at) {
     patch.closed_at = new Date().toISOString();
   }
@@ -701,7 +659,6 @@ app.patch("/api/admin/signals/:id", requireAdmin, (req, res) => {
   res.json({ ok:true, signal:sig });
 });
 
-// Deletar sinal
 app.delete("/api/admin/signals/:id", requireAdmin, (req, res) => {
   const id = Number(req.params.id);
   const ok = db.signals.delete(id);
@@ -709,26 +666,21 @@ app.delete("/api/admin/signals/:id", requireAdmin, (req, res) => {
   res.json({ ok:true });
 });
 
-// Forçar checagem de targets agora
 app.post("/api/admin/signals/check-targets", requireAdmin, async (req, res) => {
   await checkSignalTargets();
   res.json({ ok:true, checked: db.signals.active().length });
 });
 
-
 // ══════════════════════════════════════════════
 // RELATÓRIOS (admin)
 // ══════════════════════════════════════════════
-
-// Meses disponíveis
 app.get("/api/admin/reports/months", requireAdmin, (req, res) => {
   const months = db.reports ? db.reports.availableMonths() : [];
   res.json({ months });
 });
 
-// Relatório por mês: /api/admin/reports/2026-07
 app.get("/api/admin/reports/:period", requireAdmin, (req, res) => {
-  const period = req.params.period; // "2026-07" ou "2026-07-01/2026-07-31"
+  const period = req.params.period;
 
   let sigs;
   if (period.includes("/")) {
@@ -745,7 +697,6 @@ app.get("/api/admin/reports/:period", requireAdmin, (req, res) => {
   res.json({ period, metrics, signals: sorted });
 });
 
-// Relatório geral (todos os tempos)
 app.get("/api/admin/reports", requireAdmin, (req, res) => {
   const all     = db.signals.all();
   const metrics = db.reports ? db.reports.metrics(all) : {};
@@ -753,14 +704,12 @@ app.get("/api/admin/reports", requireAdmin, (req, res) => {
   res.json({ metrics, months, total: all.length });
 });
 
-
 // ══════════════════════════════════════════════
 // BYBIT API PROXY (privado — só admin)
 // ══════════════════════════════════════════════
 const crypto_mod = require("crypto");
 
 function bybitSign(queryString, secret, timestamp, recvWindow = "5000") {
-  // Bybit v5: timestamp + apiKey + recvWindow + queryString
   const paramStr = timestamp + (process.env.BYBIT_API_KEY||"") + recvWindow + queryString;
   return require("crypto").createHmac("sha256", secret).update(paramStr).digest("hex");
 }
@@ -779,7 +728,6 @@ app.get("/api/bybit/proxy", requireAdmin, async (req, res) => {
   const timestamp  = String(Date.now());
   const recvWindow = "5000";
 
-  // Monta query string preservando ordem original
   const queryString = Object.keys(params).length
     ? Object.keys(params).map(k => k + "=" + encodeURIComponent(params[k])).join("&")
     : "";
@@ -799,7 +747,6 @@ app.get("/api/bybit/proxy", requireAdmin, async (req, res) => {
       signal: AbortSignal.timeout(12000),
     });
     const data = await r.json();
-    // Log de debug em caso de erro da Bybit
     if (data.retCode && data.retCode !== 0) {
       console.warn("Bybit API erro:", data.retCode, data.retMsg, "| endpoint:", endpoint);
     }
@@ -811,7 +758,6 @@ app.get("/api/bybit/proxy", requireAdmin, async (req, res) => {
 });
 
 // Serve a página de análise Bybit
-
 app.get('/acs-scanner-pro.html', (req, res) => serveFile('acs-scanner-pro.html', res));
 
 // ══════════════════════════════════════════════════════════
@@ -838,13 +784,11 @@ function cmSave() {
 const CM_IMG_RE = /^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/;
 const CM_PAGE   = 20;
 
-// v2.2: feed devolve metadados + URL da imagem (nunca o base64)
 function cmMeta(p, imgQS) {
   const { image, ...meta } = p;
   return { ...meta, image: "/api/community/img/" + p.id + (imgQS || "") };
 }
 
-// Lista posts aprovados + pendentes do próprio usuário (leve)
 app.get("/api/community/posts", requireAuthPersisted, (req, res) => {
   const user = res.locals.user;
   const all  = [...cmState.posts].sort((a, b) => b.id - a.id);
@@ -854,7 +798,6 @@ app.get("/api/community/posts", requireAuthPersisted, (req, res) => {
   });
 });
 
-// v2.2: serve a imagem de um post com cache do navegador
 app.get("/api/community/img/:id", (req, res) => {
   const post = cmState.posts.find(p => p.id === Number(req.params.id));
   if (!post) return res.status(404).send("not found");
@@ -876,7 +819,6 @@ app.get("/api/community/img/:id", (req, res) => {
   res.send(buf);
 });
 
-// Envia novo post — vai para fila de aprovação
 app.post("/api/community/posts", requireAuthPersisted, (req, res) => {
   const user = res.locals.user;
   const { image, caption } = req.body || {};
@@ -905,7 +847,6 @@ app.post("/api/community/posts", requireAuthPersisted, (req, res) => {
   res.json({ ok: true, post: { id: post.id, status: post.status } });
 });
 
-// ADMIN — lista todos os posts (URLs de imagem já com a key)
 app.get("/api/admin/community", requireAdmin, (req, res) => {
   const k = req.headers["x-admin-key"] || req.query.key;
   res.json({
@@ -914,7 +855,6 @@ app.get("/api/admin/community", requireAdmin, (req, res) => {
   });
 });
 
-// ADMIN — aprova ou rejeita post
 app.patch("/api/admin/community/:id", requireAdmin, (req, res) => {
   const { status } = req.body || {};
   if (!["approved", "rejected"].includes(status))
@@ -926,7 +866,6 @@ app.patch("/api/admin/community/:id", requireAdmin, (req, res) => {
   res.json({ ok: true, post: cmMeta(post) });
 });
 
-// ADMIN — deleta post
 app.delete("/api/admin/community/:id", requireAdmin, (req, res) => {
   const before = cmState.posts.length;
   cmState.posts = cmState.posts.filter(p => p.id !== Number(req.params.id));
@@ -934,13 +873,11 @@ app.delete("/api/admin/community/:id", requireAdmin, (req, res) => {
   res.json({ ok: cmState.posts.length < before });
 });
 
-
 app.get('/acs-meta-ads.html', (req, res) => serveFile('acs-meta-ads.html', res));
 
 app.get("/acs-bybit.html", (req, res) => serveFile("acs-bybit.html", res));
 
 app.get("/bybit-analise.html", (req, res) => {
-  // Serve sempre o scanner pro mais recente
   const f = findFile("acs-scanner-pro.html");
   if (f) return res.sendFile(f);
   serveFile("bybit-analise.html", res);
@@ -971,6 +908,421 @@ app.post("/api/claude", requireAuthPersisted, async (req, res) => {
 });
 
 // ══════════════════════════════════════════════
+// EXCLUSÃO DE CONTA — App Store / Play Store / LGPD
+// ══════════════════════════════════════════════
+app.post("/api/auth/delete-account", requireAuthPersisted, (req, res) => {
+  const user = db.users.findById(req.user.id);
+  const { password } = req.body || {};
+  if (!password || !auth.verifyPassword(password, user.password_hash))
+    return res.status(401).json({ error: "invalid_password", message: "Senha incorreta." });
+
+  cmState.posts = cmState.posts.filter(p => p.user_id !== user.id);
+  cmSave();
+
+  db.users.update(user.id, {
+    status: "deleted",
+    email: "excluido_" + user.id + "_" + Date.now() + "@removido.acs",
+    name: "Conta excluída",
+    password_hash: "x",
+    totp_enabled: false, totp_secret: null, totp_pending_secret: null,
+  });
+
+  const cookies = parseCookiesPersisted(req);
+  if (cookies[SESSION_COOKIE]) destroySessionPersisted(cookies[SESSION_COOKIE]);
+  clearSessionCookiePersisted(res);
+  res.json({ ok: true });
+});
+
+/* ══════════════════════════════════════════════
+   FINANCEIRO v1 — ledger unificado Eduzz + Cakto
+   ══════════════════════════════════════════════ */
+(function () {
+  const FIN_FILE = path.join(CM_DIR, "finance_data.json");
+  let fin = { payments: [], raw: [], nextId: 1 };
+  try { fin = Object.assign(fin, JSON.parse(fsCm.readFileSync(FIN_FILE, "utf8"))); } catch (_) {}
+  let finT = null;
+  const finSave = () => {
+    clearTimeout(finT);
+    finT = setTimeout(() => fsCm.writeFile(FIN_FILE, JSON.stringify(fin),
+      (e) => e && console.error("[financeiro] save:", e.message)), 400);
+  };
+
+  const pick = (o, paths) => {
+    for (const p of paths) {
+      const v = p.split(".").reduce((a, k) => (a && a[k] !== undefined ? a[k] : undefined), o);
+      if (v !== undefined && v !== null && v !== "") return v;
+    }
+    return null;
+  };
+
+  const toNum = (v) => {
+    if (v == null) return null;
+    const s = String(v);
+    let n = parseFloat(s.replace(/[^\d.,-]/g, "").replace(/\.(?=\d{3}(\D|$))/g, "").replace(",", "."));
+    if (!Number.isFinite(n)) return null;
+    if (n >= 3000 && Number.isInteger(n) && !/[.,]/.test(s)) n = n / 100;
+    return +n.toFixed(2);
+  };
+
+  function classify(evt) {
+    const e = String(evt ?? "").toLowerCase();
+    if (/aprov|paid|pag[oa]|renew|renov|complet/.test(e)) return "approved";
+    if (/reembol|refund|estorn/.test(e))                  return "refunded";
+    if (/chargeback|disputa/.test(e))                     return "chargeback";
+    if (/cancel/.test(e))                                 return "canceled";
+    if (/atras|overdue|past_due|late|vencid|inadimpl/.test(e)) return "overdue";
+    if (/pend|aguard|wait|gerad|created/.test(e))         return "pending";
+    return "other";
+  }
+
+  function planoDe(produto, amount) {
+    const p = String(produto ?? "").toLowerCase();
+    if (/anual|annual|12 ?m/.test(p))        return { plan: "Anual",     days: 365 };
+    if (/semestr|6 ?m/.test(p))              return { plan: "Semestral", days: 180 };
+    if (/trimestr|3 ?m/.test(p))             return { plan: "Trimestral", days: 90 };
+    if (/mensal|m[eê]s|month/.test(p))       return { plan: "Mensal",    days: 30 };
+    if (amount != null) {
+      if (amount >= 600) return { plan: "Anual",     days: 365 };
+      if (amount >= 400) return { plan: "Semestral", days: 180 };
+      return { plan: "Mensal", days: 30 };
+    }
+    return { plan: produto || "Assinatura", days: 365 };
+  }
+
+  function registrar({ source, event, email, name, product, amount, raw }) {
+    const status = classify(event);
+    email = String(email || "").toLowerCase().trim();
+    const { plan, days } = planoDe(product, amount);
+
+    const pay = {
+      id: fin.nextId++, source, event: String(event ?? ""), status,
+      email, name: name || "", plan, amount: amount ?? null,
+      at: new Date().toISOString(), note: "",
+    };
+
+    try {
+      fin.raw.unshift({ at: pay.at, source, body: JSON.stringify(raw).slice(0, 3000) });
+      fin.raw = fin.raw.slice(0, 100);
+    } catch (_) {}
+
+    try {
+      if (email) {
+        let user = db.users.findByEmail(email);
+        if (status === "approved") {
+          const expires = new Date(Date.now() + (days + 3) * 864e5).toISOString();
+          if (!user) {
+            const tempPass = crypto.randomBytes(4).toString("hex");
+            user = db.users.create({
+              email, name: name || email.split("@")[0],
+              password_hash: auth.hashPassword(tempPass), plan,
+            });
+            db.users.update(user.id, {
+              status: "active", expires_at: expires, payment_status: "em_dia",
+              origem: source, trial_started_at: null, trial_ends_at: null, trial_expired: false,
+            });
+            pay.note = "Conta criada — senha temporária: " + tempPass + " (envie ao cliente)";
+          } else {
+            db.users.update(user.id, {
+              status: "active", plan, expires_at: expires,
+              payment_status: "em_dia", origem: user.origem || source,
+            });
+          }
+        } else if (status === "overdue" && user) {
+          db.users.update(user.id, { payment_status: "atrasado" });
+        } else if (["canceled", "refunded", "chargeback"].includes(status) && user) {
+          db.users.update(user.id, { status: "inactive", payment_status: status });
+        }
+      }
+    } catch (e) { console.error("[financeiro] sync:", e.message); }
+
+    fin.payments.push(pay);
+    if (fin.payments.length > 5000) fin.payments = fin.payments.slice(-5000);
+    finSave();
+    return pay;
+  }
+
+  global.__acsFinanceRegistrar = registrar;
+
+  /* ---- WEBHOOK CAKTO ---- */
+  app.post("/webhook/cakto", (req, res) => {
+    const sec = process.env.CAKTO_WEBHOOK_SECRET;
+    const b = req.body || {};
+    if (sec && req.query.key !== sec && pick(b, ["secret", "token", "key"]) !== sec)
+      return res.status(401).json({ error: "unauthorized" });
+
+    registrar({
+      source: "cakto",
+      event: pick(b, ["event", "type", "event_type", "status", "data.status", "data.event"]),
+      email: pick(b, ["customer.email", "data.customer.email", "client.email", "buyer.email", "subscriber.email", "email"]),
+      name:  pick(b, ["customer.name", "data.customer.name", "client.name", "buyer.name", "subscriber.name", "name"]),
+      product: pick(b, ["product.name", "data.product.name", "offer.name", "data.offer.name", "item.name", "product_name", "plan.name"]),
+      amount: toNum(pick(b, ["amount", "data.amount", "value", "total", "price", "offer.price", "data.offer.price", "purchase.price"])),
+      raw: b,
+    });
+    res.json({ ok: true });
+  });
+
+  /* ---- GRAMPO EDUZZ (legado) ---- */
+  global.__acsFinanceEduzz = function (req) {
+    let b = req.body;
+    if (!b || !Object.keys(b).length) {
+      try { b = JSON.parse(req.rawBody); }
+      catch (_) { b = require("querystring").parse(req.rawBody || ""); }
+    }
+    const stMap = { 1: "pending", 2: "pending", 3: "approved", 4: "refunded", 6: "canceled", 7: "chargeback" };
+    const rawSt = pick(b, ["trans_status", "status", "event", "type", "event_name"]);
+    const event = stMap[Number(rawSt)] || rawSt;
+    registrar({
+      source: "eduzz",
+      event,
+      email: pick(b, ["cus_email", "customer.email", "buyer_email", "email"]),
+      name:  pick(b, ["cus_name", "customer.name", "buyer_name", "name"]),
+      product: pick(b, ["product_name", "prod_name", "content_title", "product.name", "item_name"]),
+      amount: toNum(pick(b, ["trans_value", "trans_paid", "value", "amount", "price", "sale_value"])),
+      raw: b,
+    });
+  };
+
+  /* ---- RESUMO PARA O ADMIN ---- */
+  app.get("/api/admin/finance/summary", requireAdmin, (_req, res) => {
+    const now = new Date();
+    const mes = now.toISOString().slice(0, 7);
+    const doMes = fin.payments.filter((p) => p.at.slice(0, 7) === mes);
+    const soma = (arr) => +arr.reduce((a, p) => a + (p.amount || 0), 0).toFixed(2);
+
+    const aprovMes = doMes.filter((p) => p.status === "approved");
+    const reembMes = doMes.filter((p) => ["refunded", "chargeback"].includes(p.status));
+
+    const porFonte = {};
+    const porPlano = {};
+    for (const p of aprovMes) {
+      porFonte[p.source] = porFonte[p.source] || { qtd: 0, receita: 0 };
+      porFonte[p.source].qtd++; porFonte[p.source].receita = +(porFonte[p.source].receita + (p.amount || 0)).toFixed(2);
+      porPlano[p.plan] = porPlano[p.plan] || { qtd: 0, receita: 0 };
+      porPlano[p.plan].qtd++; porPlano[p.plan].receita = +(porPlano[p.plan].receita + (p.amount || 0)).toFixed(2);
+    }
+
+    const users = db.users.all().filter((u) => u.status !== "deleted");
+    const ativos = users.filter((u) => u.status === "active");
+    const vencido = (u) => u.expires_at && new Date(u.expires_at) < now;
+    const atrasados = ativos.filter((u) => u.payment_status === "atrasado" || vencido(u));
+    const venc7 = ativos.filter((u) => u.expires_at &&
+      new Date(u.expires_at) > now && new Date(u.expires_at) < new Date(Date.now() + 7 * 864e5));
+
+    res.json({
+      mes,
+      kpis: {
+        receitaMes: soma(aprovMes), vendasMes: aprovMes.length,
+        reembolsosMes: soma(reembMes), qtdReembolsosMes: reembMes.length,
+        receitaTotal: soma(fin.payments.filter((p) => p.status === "approved")),
+        ativos: ativos.length, atrasados: atrasados.length, vencendo7d: venc7.length,
+      },
+      porFonte, porPlano,
+      atrasadosList: atrasados.slice(0, 100).map((u) => ({
+        id: u.id, email: u.email, plan: u.plan, origem: u.origem || "—",
+        expires_at: u.expires_at || null,
+      })),
+      ultimos: fin.payments.slice(-40).reverse(),
+    });
+  });
+
+  app.get("/api/admin/finance/raw", requireAdmin, (_req, res) => res.json({ raw: fin.raw }));
+})();
+
+/* ══════════════════════════════════════════════
+   WEBHOOK EDUZZ v2 — Developer Hub (formato MyEduzz)
+   ══════════════════════════════════════════════ */
+app.post("/webhook/eduzz-v2", (req, res) => {
+  const key = process.env.EDUZZ_WEBHOOK_KEY;
+  const sig = req.headers["x-signature"];
+  if (key && sig) {
+    const calc = crypto.createHmac("sha256", key).update(req.rawBody || "").digest("hex");
+    if (String(sig) !== calc)
+      return res.status(401).json({ error: "invalid_signature" });
+  }
+
+  try {
+    const b = req.body || {};
+    const data = b.data || b;
+    const dig = (o, p) => p.split(".").reduce((a, k) => (a && a[k] !== undefined ? a[k] : undefined), o);
+    const pk = (paths) => {
+      for (const p of paths) {
+        const v = dig({ b, data }, p);
+        if (v !== undefined && v !== null && v !== "") return v;
+      }
+      return null;
+    };
+    const item = (Array.isArray(data.items) && data.items[0]) ||
+                 (Array.isArray(data.products) && data.products[0]) || {};
+    const num = (v) => {
+      if (v == null) return null;
+      const n = parseFloat(String(v).replace(/[^\d.,-]/g, "").replace(/\.(?=\d{3}(\D|$))/g, "").replace(",", "."));
+      return Number.isFinite(n) ? +n.toFixed(2) : null;
+    };
+
+    if (global.__acsFinanceRegistrar) {
+      global.__acsFinanceRegistrar({
+        source: "eduzz",
+        event: b.event || b.type || data.status || "evento",
+        email: pk(["data.buyer.email", "data.customer.email", "data.student.email", "b.buyer.email", "data.email", "b.email"]),
+        name:  pk(["data.buyer.name", "data.customer.name", "data.student.name", "b.buyer.name", "data.name", "b.name"]),
+        product: item.name || pk(["data.product.name", "data.offer.name", "data.contract.product.name", "data.title"]),
+        amount: num(item.price?.value ?? item.price ?? pk(["data.price.value", "data.paid.value", "data.value", "data.amount", "data.total"])),
+        raw: b,
+      });
+    }
+  } catch (e) { console.error("[eduzz-v2]", e.message); }
+  res.json({ ok: true });
+});
+
+/* ══════════════════════════════════════════════
+   PAPER TRADING v2 — livro virtual do Comitê
+   Rastreio universal: top 500 por market cap (CoinGecko)
+   ══════════════════════════════════════════════ */
+(function () {
+  const PT_FILE = path.join(CM_DIR, "paper_data.json");
+  let pt = { positions: [], nextId: 1, bank: 10000, riskPct: 1 };
+  try { pt = Object.assign(pt, JSON.parse(fsCm.readFileSync(PT_FILE, "utf8"))); } catch (_) {}
+  let ptT = null;
+  const ptSave = () => {
+    clearTimeout(ptT);
+    ptT = setTimeout(() => fsCm.writeFile(PT_FILE, JSON.stringify(pt),
+      (e) => e && console.error("[paper] save:", e.message)), 400);
+  };
+
+  let cgMap = { at: 0, map: {} };
+  async function precosAmplos() {
+    if (Date.now() - cgMap.at < 60_000 && Object.keys(cgMap.map).length) return cgMap.map;
+    const map = {};
+    for (const page of [1, 2]) {
+      try {
+        const r = await fetch(
+          `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=${page}&sparkline=false`,
+          { headers: { Accept: "application/json", "User-Agent": "acs-system/2.3" }, signal: AbortSignal.timeout(9000) }
+        );
+        if (!r.ok) continue;
+        for (const c of await r.json()) {
+          const s = String(c.symbol || "").toUpperCase();
+          if (s && map[s] === undefined && c.current_price != null) map[s] = c.current_price;
+        }
+      } catch (_) {}
+    }
+    if (Object.keys(map).length) cgMap = { at: Date.now(), map };
+    return cgMap.map;
+  }
+
+  function precoDoPar(map, pair) {
+    let base = String(pair).split("/")[0].toUpperCase();
+    let mult = 1;
+    const m = /^(1(?:0)+)(.+)$/.exec(base);
+    if (m && map[base] === undefined && map[m[2]] !== undefined) { mult = +m[1]; base = m[2]; }
+    const p = map[base];
+    return p === undefined ? null : p * mult;
+  }
+
+  const rMult = (p, exit) => {
+    const risk = Math.abs(p.entry - p.stop);
+    if (!risk) return 0;
+    const raw = (exit - p.entry) / risk;
+    return +((p.side === "SHORT" ? -raw : raw)).toFixed(2);
+  };
+
+  function fechar(p, exit, motivo) {
+    p.status = "closed";
+    p.closed_at = new Date().toISOString();
+    p.exit = exit;
+    p.result_r = rMult(p, exit);
+    p.result_pct = +(((exit - p.entry) / p.entry) * 100 * (p.side === "SHORT" ? -1 : 1)).toFixed(2);
+    p.motivo = motivo;
+  }
+
+  async function ptTrack() {
+    const abertas = pt.positions.filter((p) => p.status === "open");
+    if (!abertas.length) return;
+    const map = await precosAmplos();
+    if (!Object.keys(map).length) return;
+    let mudou = false;
+
+    for (const p of abertas) {
+      const px = precoDoPar(map, p.pair);
+      if (px == null) continue;
+      const dias = (Date.now() - new Date(p.opened_at)) / 864e5;
+      const stopHit = p.side === "LONG" ? px <= p.stop : px >= p.stop;
+      const alvo = p.targets[p.hit];
+      const alvoHit = alvo != null && (p.side === "LONG" ? px >= alvo : px <= alvo);
+
+      if (stopHit) { fechar(p, p.stop, "stop"); mudou = true; }
+      else if (alvoHit) {
+        p.hit++;
+        if (p.hit === 1) p.stop = p.entry;
+        if (p.hit >= p.targets.length) fechar(p, alvo, "alvo_final");
+        mudou = true;
+      } else if (dias >= 30) { fechar(p, px, "expirou_30d"); mudou = true; }
+      else { p.last_price = px; }
+    }
+    if (mudou) ptSave();
+  }
+  setInterval(ptTrack, 60_000);
+
+  app.post("/api/admin/paper/open", requireAdmin, async (req, res) => {
+    const { pair, side, entry, stop, targets, score, setup, ata } = req.body || {};
+    if (!pair || !entry || !stop || !Array.isArray(targets) || !targets.length)
+      return res.status(400).json({ error: "missing_fields" });
+    if (pt.positions.filter((p) => p.status === "open" && p.pair === pair).length)
+      return res.status(409).json({ error: "duplicada", message: "Já existe posição aberta neste par." });
+
+    const map = await precosAmplos();
+    if (precoDoPar(map, pair) == null)
+      return res.status(422).json({ error: "untrackable", message: "Par fora do top 500 do CoinGecko — o servidor não consegue rastrear. Fica só como análise." });
+
+    const pos = {
+      id: pt.nextId++, pair, side: side === "SHORT" ? "SHORT" : "LONG",
+      entry: +entry, stop: +stop, targets: targets.map(Number),
+      score: score ?? null, setup: setup || "comite",
+      ata: String(ata || "").slice(0, 8000),
+      status: "open", hit: 0, opened_at: new Date().toISOString(),
+    };
+    pt.positions.push(pos);
+    ptSave();
+    res.json({ ok: true, position: pos });
+  });
+
+  app.get("/api/admin/paper/book", requireAdmin, async (_req, res) => {
+    await ptTrack().catch(() => {});
+    const closed = pt.positions.filter((p) => p.status === "closed");
+    const wins = closed.filter((p) => p.result_r > 0);
+    const somaR = +closed.reduce((a, p) => a + (p.result_r || 0), 0).toFixed(2);
+    res.json({
+      bank: pt.bank, riskPct: pt.riskPct,
+      equity: +(pt.bank * (1 + (pt.riskPct / 100) * somaR)).toFixed(2),
+      stats: {
+        abertas: pt.positions.filter((p) => p.status === "open").length,
+        fechadas: closed.length, wins: wins.length,
+        winRate: closed.length ? Math.round((wins.length / closed.length) * 100) : null,
+        somaR, mediaR: closed.length ? +(somaR / closed.length).toFixed(2) : null,
+      },
+      positions: [...pt.positions].sort((a, b) => b.id - a.id).slice(0, 200),
+    });
+  });
+
+  app.post("/api/admin/paper/close/:id", requireAdmin, async (req, res) => {
+    const p = pt.positions.find((x) => x.id === Number(req.params.id) && x.status === "open");
+    if (!p) return res.status(404).json({ error: "not_found" });
+    const map = await precosAmplos();
+    fechar(p, precoDoPar(map, p.pair) ?? p.entry, "manual");
+    ptSave();
+    res.json({ ok: true, position: p });
+  });
+
+  app.delete("/api/admin/paper/:id", requireAdmin, (req, res) => {
+    const before = pt.positions.length;
+    pt.positions = pt.positions.filter((x) => x.id !== Number(req.params.id));
+    ptSave();
+    res.json({ ok: pt.positions.length < before });
+  });
+})();
+
+// ══════════════════════════════════════════════
 // PÁGINAS — detecta paths automaticamente
 // ══════════════════════════════════════════════
 const fs2 = require("fs");
@@ -991,7 +1343,6 @@ function findFile(filename) {
   return null;
 }
 
-// Log de diagnóstico no boot
 ["index.html","login.html","app.js","style.css","login.css","login.js","admin.html"].forEach(f => {
   const found = findFile(f);
   console.log(`   ${f}: ${found ? "✅ "+found : "❌ NÃO ENCONTRADO"}`);
@@ -1010,7 +1361,6 @@ app.get("/manifest.json",        (req, res) => { res.setHeader("Content-Type","a
 app.get("/icon-192.png",         (req, res) => serveFile("icon-192.png", res));
 app.get("/icon-512.png",         (req, res) => serveFile("icon-512.png", res));
 app.get("/OneSignalSDKWorker.js", (req, res) => {
-  // Service Worker deve ser público e servido como JS
   const filePath = findFile("OneSignalSDKWorker.js");
   if (!filePath) return res.status(404).send("OneSignalSDKWorker.js não encontrado");
   res.setHeader("Content-Type", "application/javascript");
@@ -1018,16 +1368,19 @@ app.get("/OneSignalSDKWorker.js", (req, res) => {
   res.sendFile(filePath);
 });
 app.get("/admin.html",   (req, res) => serveFile("admin.html", res));
+app.get("/privacidade.html", (req, res) => serveFile("privacidade.html", res));
+app.get("/termos.html",      (req, res) => serveFile("termos.html", res));
 app.get(["/","/index.html"], requirePageAuthPersisted, (req, res) => serveFile("index.html", res));
 app.get("/app.js",       requirePageAuthPersisted, (req, res) => serveFile("app.js", res));
 app.get("/style.css",    requirePageAuthPersisted, (req, res) => serveFile("style.css", res));
 app.get("/login.css",    (req, res) => serveFile("login.css", res));
 app.get("/login.js",     (req, res) => serveFile("login.js", res));
 
-// v2.1: bloqueia arquivos sensíveis antes do static
+// Bloqueia arquivos sensíveis antes do static
 const CM_BLOCKED = new Set([
   "/server.js", "/db.js", "/auth.js", "/eduzz.js",
   "/database.json", "/community_data.json",
+  "/finance_data.json", "/paper_data.json",
   "/package.json", "/package-lock.json", "/.env",
 ]);
 app.use((req, res, next) => {
@@ -1039,7 +1392,6 @@ app.use((req, res, next) => {
 app.use(express.static(__dirname));
 app.use(express.static(path.join(__dirname, "public")));
 
-// ══════════════════════════════════════════════
 /* ═══════════════════════════════════════════════
    RENDA PASSIVA — rotas Earn (versão embutida)
    ═══════════════════════════════════════════════ */
@@ -1125,350 +1477,11 @@ app.use(express.static(path.join(__dirname, "public")));
     }
   });
 })();
-/* ══════════════════════════════════════════════
-   FINANCEIRO v1 — ledger unificado Eduzz + Cakto
-   Webhook Cakto, sincronização de assinantes e
-   resumo de vendas/pagamentos para o admin.
-   ══════════════════════════════════════════════ */
-(function () {
-  const FIN_FILE = path.join(CM_DIR, "finance_data.json");
-  let fin = { payments: [], raw: [], nextId: 1 };
-  try { fin = Object.assign(fin, JSON.parse(fsCm.readFileSync(FIN_FILE, "utf8"))); } catch (_) {}
-  let finT = null;
-  const finSave = () => {
-    clearTimeout(finT);
-    finT = setTimeout(() => fsCm.writeFile(FIN_FILE, JSON.stringify(fin),
-      (e) => e && console.error("[financeiro] save:", e.message)), 400);
-  };
 
-  const pick = (o, paths) => {
-    for (const p of paths) {
-      const v = p.split(".").reduce((a, k) => (a && a[k] !== undefined ? a[k] : undefined), o);
-      if (v !== undefined && v !== null && v !== "") return v;
-    }
-    return null;
-  };
+app.listen(PORT, () => {
+  console.log(`\n🚀 ALFA CRIPTO SINAIS v2.3 rodando na porta ${PORT}`);
+  console.log(`   Comunidade leve · 2FA · Financeiro · Paper Trading (top 500)`);
+  console.log(`   Login:           /login.html\n`);
+});
 
-  const toNum = (v) => {
-    if (v == null) return null;
-    const s = String(v);
-    let n = parseFloat(s.replace(/[^\d.,-]/g, "").replace(/\.(?=\d{3}(\D|$))/g, "").replace(",", "."));
-    if (!Number.isFinite(n)) return null;
-    // heurística: valor inteiro alto sem separador = centavos (ex: 49700 → 497.00)
-    if (n >= 3000 && Number.isInteger(n) && !/[.,]/.test(s)) n = n / 100;
-    return +n.toFixed(2);
-  };
-
-  function classify(evt) {
-    const e = String(evt ?? "").toLowerCase();
-    if (/aprov|paid|pag[oa]|renew|renov|complet/.test(e)) return "approved";
-    if (/reembol|refund|estorn/.test(e))                  return "refunded";
-    if (/chargeback|disputa/.test(e))                     return "chargeback";
-    if (/cancel/.test(e))                                 return "canceled";
-    if (/atras|overdue|past_due|late|vencid|inadimpl/.test(e)) return "overdue";
-    if (/pend|aguard|wait|gerad|created/.test(e))         return "pending";
-    return "other";
-  }
-
-  function planoDe(produto, amount) {
-    const p = String(produto ?? "").toLowerCase();
-    if (/anual|annual|12 ?m/.test(p))        return { plan: "Anual",     days: 365 };
-    if (/semestr|6 ?m/.test(p))              return { plan: "Semestral", days: 180 };
-    if (/trimestr|3 ?m/.test(p))             return { plan: "Trimestral", days: 90 };
-    if (/mensal|m[eê]s|month/.test(p))       return { plan: "Mensal",    days: 30 };
-    if (amount != null) {
-      if (amount >= 600) return { plan: "Anual",     days: 365 };
-      if (amount >= 400) return { plan: "Semestral", days: 180 };
-      return { plan: "Mensal", days: 30 };
-    }
-    return { plan: produto || "Assinatura", days: 365 };
-  }
-
-  function registrar({ source, event, email, name, product, amount, raw }) {
-    const status = classify(event);
-    email = String(email || "").toLowerCase().trim();
-    const { plan, days } = planoDe(product, amount);
-
-    const pay = {
-      id: fin.nextId++, source, event: String(event ?? ""), status,
-      email, name: name || "", plan, amount: amount ?? null,
-      at: new Date().toISOString(), note: "",
-    };
-
-    // espelho bruto p/ calibragem do adaptador (últimos 100)
-    try {
-      fin.raw.unshift({ at: pay.at, source, body: JSON.stringify(raw).slice(0, 3000) });
-      fin.raw = fin.raw.slice(0, 100);
-    } catch (_) {}
-
-    // sincroniza assinante
-    try {
-      if (email) {
-        let user = db.users.findByEmail(email);
-        if (status === "approved") {
-          const expires = new Date(Date.now() + (days + 3) * 864e5).toISOString(); // +3d carência
-          if (!user) {
-            const tempPass = crypto.randomBytes(4).toString("hex");
-            user = db.users.create({
-              email, name: name || email.split("@")[0],
-              password_hash: auth.hashPassword(tempPass), plan,
-            });
-            db.users.update(user.id, {
-              status: "active", expires_at: expires, payment_status: "em_dia",
-              origem: source, trial_started_at: null, trial_ends_at: null, trial_expired: false,
-            });
-            pay.note = "Conta criada — senha temporária: " + tempPass + " (envie ao cliente)";
-          } else {
-            db.users.update(user.id, {
-              status: "active", plan, expires_at: expires,
-              payment_status: "em_dia", origem: user.origem || source,
-            });
-          }
-        } else if (status === "overdue" && user) {
-          db.users.update(user.id, { payment_status: "atrasado" });
-        } else if (["canceled", "refunded", "chargeback"].includes(status) && user) {
-          db.users.update(user.id, { status: "inactive", payment_status: status });
-        }
-      }
-    } catch (e) { console.error("[financeiro] sync:", e.message); }
-
-    fin.payments.push(pay);
-    if (fin.payments.length > 5000) fin.payments = fin.payments.slice(-5000);
-    finSave();
-    return pay;
-  }
-
-  /* ---- WEBHOOK CAKTO ---- */
-  app.post("/webhook/cakto", (req, res) => {
-    const sec = process.env.CAKTO_WEBHOOK_SECRET;
-    const b = req.body || {};
-    if (sec && req.query.key !== sec && pick(b, ["secret", "token", "key"]) !== sec)
-      return res.status(401).json({ error: "unauthorized" });
-
-    registrar({
-      source: "cakto",
-      event: pick(b, ["event", "type", "event_type", "status", "data.status", "data.event"]),
-      email: pick(b, ["customer.email", "data.customer.email", "client.email", "buyer.email", "subscriber.email", "email"]),
-      name:  pick(b, ["customer.name", "data.customer.name", "client.name", "buyer.name", "subscriber.name", "name"]),
-      product: pick(b, ["product.name", "data.product.name", "offer.name", "data.offer.name", "item.name", "product_name", "plan.name"]),
-      amount: toNum(pick(b, ["amount", "data.amount", "value", "total", "price", "offer.price", "data.offer.price", "purchase.price"])),
-      raw: b,
-    });
-    res.json({ ok: true });
-  });
-
-  /* ---- GRAMPO EDUZZ (chamado pelo wrapper da rota) ---- */
-  global.__acsFinanceEduzz = function (req) {
-    let b = req.body;
-    if (!b || !Object.keys(b).length) {
-      try { b = JSON.parse(req.rawBody); }
-      catch (_) { b = require("querystring").parse(req.rawBody || ""); }
-    }
-    const stMap = { 1: "pending", 2: "pending", 3: "approved", 4: "refunded", 6: "canceled", 7: "chargeback" };
-    const rawSt = pick(b, ["trans_status", "status", "event", "type", "event_name"]);
-    const event = stMap[Number(rawSt)] || rawSt;
-    registrar({
-      source: "eduzz",
-      event,
-      email: pick(b, ["cus_email", "customer.email", "buyer_email", "email"]),
-      name:  pick(b, ["cus_name", "customer.name", "buyer_name", "name"]),
-      product: pick(b, ["product_name", "prod_name", "content_title", "product.name", "item_name"]),
-      amount: toNum(pick(b, ["trans_value", "trans_paid", "value", "amount", "price", "sale_value"])),
-      raw: b,
-    });
-  };
-
-  /* ---- RESUMO PARA O ADMIN ---- */
-  app.get("/api/admin/finance/summary", requireAdmin, (_req, res) => {
-    const now = new Date();
-    const mes = now.toISOString().slice(0, 7);
-    const doMes = fin.payments.filter((p) => p.at.slice(0, 7) === mes);
-    const soma = (arr) => +arr.reduce((a, p) => a + (p.amount || 0), 0).toFixed(2);
-
-    const aprovMes = doMes.filter((p) => p.status === "approved");
-    const reembMes = doMes.filter((p) => ["refunded", "chargeback"].includes(p.status));
-
-    const porFonte = {};
-    const porPlano = {};
-    for (const p of aprovMes) {
-      porFonte[p.source] = porFonte[p.source] || { qtd: 0, receita: 0 };
-      porFonte[p.source].qtd++; porFonte[p.source].receita = +(porFonte[p.source].receita + (p.amount || 0)).toFixed(2);
-      porPlano[p.plan] = porPlano[p.plan] || { qtd: 0, receita: 0 };
-      porPlano[p.plan].qtd++; porPlano[p.plan].receita = +(porPlano[p.plan].receita + (p.amount || 0)).toFixed(2);
-    }
-
-    const users = db.users.all().filter((u) => u.status !== "deleted");
-    const ativos = users.filter((u) => u.status === "active");
-    const vencido = (u) => u.expires_at && new Date(u.expires_at) < now;
-    const atrasados = ativos.filter((u) => u.payment_status === "atrasado" || vencido(u));
-    const venc7 = ativos.filter((u) => u.expires_at &&
-      new Date(u.expires_at) > now && new Date(u.expires_at) < new Date(Date.now() + 7 * 864e5));
-
-    res.json({
-      mes,
-      kpis: {
-        receitaMes: soma(aprovMes), vendasMes: aprovMes.length,
-        reembolsosMes: soma(reembMes), qtdReembolsosMes: reembMes.length,
-        receitaTotal: soma(fin.payments.filter((p) => p.status === "approved")),
-        ativos: ativos.length, atrasados: atrasados.length, vencendo7d: venc7.length,
-      },
-      porFonte, porPlano,
-      atrasadosList: atrasados.slice(0, 100).map((u) => ({
-        id: u.id, email: u.email, plan: u.plan, origem: u.origem || "—",
-        expires_at: u.expires_at || null,
-      })),
-      ultimos: fin.payments.slice(-40).reverse(),
-    });
-  });
-
-  // Espelho bruto p/ calibrar o adaptador: /api/admin/finance/raw?key=ADMIN_KEY
-  app.get("/api/admin/finance/raw", requireAdmin, (_req, res) => res.json({ raw: fin.raw }));
-/* ══════════════════════════════════════════════
-   PAPER TRADING v2 — livro virtual do Comitê
-   Rastreio universal: preços do top 500 por market cap
-   (CoinGecko /coins/markets, cache 60s) → acompanha
-   qualquer par aprovado pelo comitê. Zero custo externo.
-   ══════════════════════════════════════════════ */
-(function () {
-  const PT_FILE = path.join(CM_DIR, "paper_data.json");
-  let pt = { positions: [], nextId: 1, bank: 10000, riskPct: 1 };
-  try { pt = Object.assign(pt, JSON.parse(fsCm.readFileSync(PT_FILE, "utf8"))); } catch (_) {}
-  let ptT = null;
-  const ptSave = () => {
-    clearTimeout(ptT);
-    ptT = setTimeout(() => fsCm.writeFile(PT_FILE, JSON.stringify(pt),
-      (e) => e && console.error("[paper] save:", e.message)), 400);
-  };
-
-  /* mapa SÍMBOLO → preço USD (top 500 CoinGecko), cache 60s */
-  let cgMap = { at: 0, map: {} };
-  async function precosAmplos() {
-    if (Date.now() - cgMap.at < 60_000 && Object.keys(cgMap.map).length) return cgMap.map;
-    const map = {};
-    for (const page of [1, 2]) {
-      try {
-        const r = await fetch(
-          `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=${page}&sparkline=false`,
-          { headers: { Accept: "application/json", "User-Agent": "acs-system/2.2" }, signal: AbortSignal.timeout(9000) }
-        );
-        if (!r.ok) continue;
-        for (const c of await r.json()) {
-          const s = String(c.symbol || "").toUpperCase();
-          if (s && map[s] === undefined && c.current_price != null) map[s] = c.current_price;
-        }
-      } catch (_) {}
-    }
-    if (Object.keys(map).length) cgMap = { at: Date.now(), map };
-    return cgMap.map;
-  }
-
-  function precoDoPar(map, pair) {
-    let base = String(pair).split("/")[0].toUpperCase();
-    let mult = 1;
-    const m = /^(1(?:0)+)(.+)$/.exec(base); // 1000PEPE, 10000SATS…
-    if (m && map[base] === undefined && map[m[2]] !== undefined) { mult = +m[1]; base = m[2]; }
-    const p = map[base];
-    return p === undefined ? null : p * mult;
-  }
-
-  const rMult = (p, exit) => {
-    const risk = Math.abs(p.entry - p.stop);
-    if (!risk) return 0;
-    const raw = (exit - p.entry) / risk;
-    return +((p.side === "SHORT" ? -raw : raw)).toFixed(2);
-  };
-
-  function fechar(p, exit, motivo) {
-    p.status = "closed";
-    p.closed_at = new Date().toISOString();
-    p.exit = exit;
-    p.result_r = rMult(p, exit);
-    p.result_pct = +(((exit - p.entry) / p.entry) * 100 * (p.side === "SHORT" ? -1 : 1)).toFixed(2);
-    p.motivo = motivo;
-  }
-
-  async function ptTrack() {
-    const abertas = pt.positions.filter((p) => p.status === "open");
-    if (!abertas.length) return;
-    const map = await precosAmplos();
-    if (!Object.keys(map).length) return;
-    let mudou = false;
-
-    for (const p of abertas) {
-      const px = precoDoPar(map, p.pair);
-      if (px == null) continue;
-      const dias = (Date.now() - new Date(p.opened_at)) / 864e5;
-      const stopHit = p.side === "LONG" ? px <= p.stop : px >= p.stop;
-      const alvo = p.targets[p.hit];
-      const alvoHit = alvo != null && (p.side === "LONG" ? px >= alvo : px <= alvo);
-
-      if (stopHit) { fechar(p, p.stop, "stop"); mudou = true; }
-      else if (alvoHit) {
-        p.hit++;
-        if (p.hit === 1) p.stop = p.entry; // trailing: 1º alvo → stop no empate
-        if (p.hit >= p.targets.length) fechar(p, alvo, "alvo_final");
-        mudou = true;
-      } else if (dias >= 30) { fechar(p, px, "expirou_30d"); mudou = true; }
-      else { p.last_price = px; }
-    }
-    if (mudou) ptSave();
-  }
-  setInterval(ptTrack, 60_000);
-
-  app.post("/api/admin/paper/open", requireAdmin, async (req, res) => {
-    const { pair, side, entry, stop, targets, score, setup, ata } = req.body || {};
-    if (!pair || !entry || !stop || !Array.isArray(targets) || !targets.length)
-      return res.status(400).json({ error: "missing_fields" });
-    if (pt.positions.filter((p) => p.status === "open" && p.pair === pair).length)
-      return res.status(409).json({ error: "duplicada", message: "Já existe posição aberta neste par." });
-
-    const map = await precosAmplos();
-    if (precoDoPar(map, pair) == null)
-      return res.status(422).json({ error: "untrackable", message: "Par fora do top 500 do CoinGecko — o servidor não consegue rastrear. Fica só como análise." });
-
-    const pos = {
-      id: pt.nextId++, pair, side: side === "SHORT" ? "SHORT" : "LONG",
-      entry: +entry, stop: +stop, targets: targets.map(Number),
-      score: score ?? null, setup: setup || "comite",
-      ata: String(ata || "").slice(0, 8000),
-      status: "open", hit: 0, opened_at: new Date().toISOString(),
-    };
-    pt.positions.push(pos);
-    ptSave();
-    res.json({ ok: true, position: pos });
-  });
-
-  app.get("/api/admin/paper/book", requireAdmin, async (_req, res) => {
-    await ptTrack().catch(() => {});
-    const closed = pt.positions.filter((p) => p.status === "closed");
-    const wins = closed.filter((p) => p.result_r > 0);
-    const somaR = +closed.reduce((a, p) => a + (p.result_r || 0), 0).toFixed(2);
-    res.json({
-      bank: pt.bank, riskPct: pt.riskPct,
-      equity: +(pt.bank * (1 + (pt.riskPct / 100) * somaR)).toFixed(2),
-      stats: {
-        abertas: pt.positions.filter((p) => p.status === "open").length,
-        fechadas: closed.length, wins: wins.length,
-        winRate: closed.length ? Math.round((wins.length / closed.length) * 100) : null,
-        somaR, mediaR: closed.length ? +(somaR / closed.length).toFixed(2) : null,
-      },
-      positions: [...pt.positions].sort((a, b) => b.id - a.id).slice(0, 200),
-    });
-  });
-
-  app.post("/api/admin/paper/close/:id", requireAdmin, async (req, res) => {
-    const p = pt.positions.find((x) => x.id === Number(req.params.id) && x.status === "open");
-    if (!p) return res.status(404).json({ error: "not_found" });
-    const map = await precosAmplos();
-    fechar(p, precoDoPar(map, p.pair) ?? p.entry, "manual");
-    ptSave();
-    res.json({ ok: true, position: p });
-  });
-
-  app.delete("/api/admin/paper/:id", requireAdmin, (req, res) => {
-    const before = pt.positions.length;
-    pt.positions = pt.positions.filter((x) => x.id !== Number(req.params.id));
-    ptSave();
-    res.json({ ok: pt.positions.length < before });
-  });
-})();
+setInterval(() => db.sessions.cleanExpired(), 60 * 60 * 1000).unref();
