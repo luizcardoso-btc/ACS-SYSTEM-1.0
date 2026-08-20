@@ -1323,11 +1323,11 @@ app.use(express.static(path.join(__dirname, "public")));
 
   // Espelho bruto p/ calibrar o adaptador: /api/admin/finance/raw?key=ADMIN_KEY
   app.get("/api/admin/finance/raw", requireAdmin, (_req, res) => res.json({ raw: fin.raw }));
-})();/* ══════════════════════════════════════════════
-   PAPER TRADING v1 — livro virtual do Comitê
-   Banca fictícia, risco 1% por ideia, rastreio
-   automático via fetchPrices (CoinGecko) a cada 60s,
-   expiração em 30 dias. Zero custo externo.
+/* ══════════════════════════════════════════════
+   PAPER TRADING v2 — livro virtual do Comitê
+   Rastreio universal: preços do top 500 por market cap
+   (CoinGecko /coins/markets, cache 60s) → acompanha
+   qualquer par aprovado pelo comitê. Zero custo externo.
    ══════════════════════════════════════════════ */
 (function () {
   const PT_FILE = path.join(CM_DIR, "paper_data.json");
@@ -1340,11 +1340,42 @@ app.use(express.static(path.join(__dirname, "public")));
       (e) => e && console.error("[paper] save:", e.message)), 400);
   };
 
+  /* mapa SÍMBOLO → preço USD (top 500 CoinGecko), cache 60s */
+  let cgMap = { at: 0, map: {} };
+  async function precosAmplos() {
+    if (Date.now() - cgMap.at < 60_000 && Object.keys(cgMap.map).length) return cgMap.map;
+    const map = {};
+    for (const page of [1, 2]) {
+      try {
+        const r = await fetch(
+          `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=${page}&sparkline=false`,
+          { headers: { Accept: "application/json", "User-Agent": "acs-system/2.2" }, signal: AbortSignal.timeout(9000) }
+        );
+        if (!r.ok) continue;
+        for (const c of await r.json()) {
+          const s = String(c.symbol || "").toUpperCase();
+          if (s && map[s] === undefined && c.current_price != null) map[s] = c.current_price;
+        }
+      } catch (_) {}
+    }
+    if (Object.keys(map).length) cgMap = { at: Date.now(), map };
+    return cgMap.map;
+  }
+
+  function precoDoPar(map, pair) {
+    let base = String(pair).split("/")[0].toUpperCase();
+    let mult = 1;
+    const m = /^(1(?:0)+)(.+)$/.exec(base); // 1000PEPE, 10000SATS…
+    if (m && map[base] === undefined && map[m[2]] !== undefined) { mult = +m[1]; base = m[2]; }
+    const p = map[base];
+    return p === undefined ? null : p * mult;
+  }
+
   const rMult = (p, exit) => {
     const risk = Math.abs(p.entry - p.stop);
     if (!risk) return 0;
     const raw = (exit - p.entry) / risk;
-    return +( (p.side === "SHORT" ? -raw : raw) ).toFixed(2);
+    return +((p.side === "SHORT" ? -raw : raw)).toFixed(2);
   };
 
   function fechar(p, exit, motivo) {
@@ -1359,13 +1390,13 @@ app.use(express.static(path.join(__dirname, "public")));
   async function ptTrack() {
     const abertas = pt.positions.filter((p) => p.status === "open");
     if (!abertas.length) return;
-    const prices = await fetchPrices();
-    if (!prices) return;
+    const map = await precosAmplos();
+    if (!Object.keys(map).length) return;
     let mudou = false;
 
     for (const p of abertas) {
-      const px = prices[p.pair]?.price;
-      if (!px) continue;
+      const px = precoDoPar(map, p.pair);
+      if (px == null) continue;
       const dias = (Date.now() - new Date(p.opened_at)) / 864e5;
       const stopHit = p.side === "LONG" ? px <= p.stop : px >= p.stop;
       const alvo = p.targets[p.hit];
@@ -1374,9 +1405,8 @@ app.use(express.static(path.join(__dirname, "public")));
       if (stopHit) { fechar(p, p.stop, "stop"); mudou = true; }
       else if (alvoHit) {
         p.hit++;
-        // trailing simples: no 1º alvo, stop vai pro empate
-        if (p.hit === 1) p.stop = p.entry;
-        if (p.hit >= p.targets.length) { fechar(p, alvo, "alvo_final"); }
+        if (p.hit === 1) p.stop = p.entry; // trailing: 1º alvo → stop no empate
+        if (p.hit >= p.targets.length) fechar(p, alvo, "alvo_final");
         mudou = true;
       } else if (dias >= 30) { fechar(p, px, "expirou_30d"); mudou = true; }
       else { p.last_price = px; }
@@ -1385,12 +1415,17 @@ app.use(express.static(path.join(__dirname, "public")));
   }
   setInterval(ptTrack, 60_000);
 
-  app.post("/api/admin/paper/open", requireAdmin, (req, res) => {
+  app.post("/api/admin/paper/open", requireAdmin, async (req, res) => {
     const { pair, side, entry, stop, targets, score, setup, ata } = req.body || {};
     if (!pair || !entry || !stop || !Array.isArray(targets) || !targets.length)
       return res.status(400).json({ error: "missing_fields" });
     if (pt.positions.filter((p) => p.status === "open" && p.pair === pair).length)
       return res.status(409).json({ error: "duplicada", message: "Já existe posição aberta neste par." });
+
+    const map = await precosAmplos();
+    if (precoDoPar(map, pair) == null)
+      return res.status(422).json({ error: "untrackable", message: "Par fora do top 500 do CoinGecko — o servidor não consegue rastrear. Fica só como análise." });
+
     const pos = {
       id: pt.nextId++, pair, side: side === "SHORT" ? "SHORT" : "LONG",
       entry: +entry, stop: +stop, targets: targets.map(Number),
@@ -1424,8 +1459,8 @@ app.use(express.static(path.join(__dirname, "public")));
   app.post("/api/admin/paper/close/:id", requireAdmin, async (req, res) => {
     const p = pt.positions.find((x) => x.id === Number(req.params.id) && x.status === "open");
     if (!p) return res.status(404).json({ error: "not_found" });
-    const prices = await fetchPrices();
-    fechar(p, prices?.[p.pair]?.price ?? p.entry, "manual");
+    const map = await precosAmplos();
+    fechar(p, precoDoPar(map, p.pair) ?? p.entry, "manual");
     ptSave();
     res.json({ ok: true, position: p });
   });
@@ -1437,11 +1472,3 @@ app.use(express.static(path.join(__dirname, "public")));
     res.json({ ok: pt.positions.length < before });
   });
 })();
-app.listen(PORT, () => {
-  console.log(`\n🚀 ALFA CRIPTO SINAIS v2.2 rodando na porta ${PORT}`);
-  console.log(`   Feed Comunidade: imagens por URL com cache`);
-  console.log(`   2FA TOTP:        ativo (Authy/Google Authenticator)`);
-  console.log(`   Login:           /login.html\n`);
-});
-
-setInterval(() => db.sessions.cleanExpired(), 60 * 60 * 1000).unref();
