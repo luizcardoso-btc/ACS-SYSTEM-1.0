@@ -1461,3 +1461,346 @@ function playBeep(success=true) {
 </script>
 </body>
 </html>
+<!-- ═══════════════════════════════════════════════════════════
+     ACS · COMITÊ DE INVESTIMENTO v2 — módulo do Scanner Pro
+     Botão flutuante 🧠 + painel overlay. Visível só p/ quem tem
+     a ADMIN_KEY salva ou abre a página com #comite na URL.
+     Requer o bloco "PAPER TRADING v1" no server.js.
+     ═══════════════════════════════════════════════════════════ -->
+<script>
+(function () {
+  "use strict";
+
+  function boot() {
+    if (window.__acsComiteScanner) return;
+    window.__acsComiteScanner = true;
+
+    var KEY = function () { return localStorage.getItem("alfa_admin_key") || ""; };
+    if (!KEY() && !/comite/i.test(location.hash)) return; // invisível p/ assinante
+
+    /* ---------- estilos autocontidos (não dependem do CSS do scanner) ---------- */
+    var st = document.createElement("style");
+    st.textContent = `
+    .cx-fab{position:fixed;left:14px;bottom:14px;z-index:99998;background:#3ECF8E;color:#04240F;border:none;border-radius:26px;padding:12px 18px;font-weight:800;font-size:13px;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.5);font-family:-apple-system,"Segoe UI",Roboto,sans-serif}
+    .cx-ov{position:fixed;inset:0;z-index:99999;background:rgba(5,9,7,.97);display:none;overflow-y:auto;padding:14px}
+    .cx-ov.on{display:block}
+    .cx-box{max-width:780px;margin:0 auto;font-family:-apple-system,"Segoe UI",Roboto,sans-serif;color:#EDF2EF}
+    .cx-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:10px}
+    .cx-h{font-size:17px;font-weight:800}.cx-h span{color:#3ECF8E}
+    .cx-x{background:transparent;border:1px solid #2C3830;color:#8B968F;border-radius:8px;padding:7px 14px;cursor:pointer;font-weight:700}
+    .cx-run{background:#3ECF8E;color:#04240F;border:none;border-radius:10px;padding:12px 18px;font-weight:800;font-size:13.5px;cursor:pointer}
+    .cx-run:disabled{opacity:.5}
+    .cx-status{font-family:ui-monospace,monospace;font-size:11px;color:#8B968F;margin:10px 0 14px;line-height:1.6}
+    .cx-card{background:#141A16;border:1px solid #212B25;border-radius:12px;padding:16px;margin-bottom:12px}
+    .cx-card.ap{border-color:rgba(62,207,142,.5)}.cx-card.rp{opacity:.6}
+    .cx-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+    .cx-nota{font-family:ui-monospace,monospace;font-size:22px;font-weight:700}
+    .cx-b{font-size:10px;font-weight:800;padding:3px 9px;border-radius:6px;font-family:ui-monospace,monospace}
+    .cx-b.long{background:rgba(91,168,217,.15);color:#5BA8D9}.cx-b.short{background:rgba(224,104,95,.15);color:#E0685F}
+    .cx-b.ok{background:rgba(62,207,142,.12);color:#3ECF8E}.cx-b.no{background:rgba(139,150,143,.12);color:#8B968F}
+    .cx-b.win{background:rgba(62,207,142,.12);color:#3ECF8E}.cx-b.loss{background:rgba(224,104,95,.12);color:#E0685F}.cx-b.open{background:rgba(217,178,74,.12);color:#D9B24A}
+    .cx-ag{display:inline-block;font-family:ui-monospace,monospace;font-size:10px;padding:2px 8px;border-radius:5px;background:#1A211C;border:1px solid #212B25;margin:2px 3px 0 0;color:#8B968F}
+    .cx-plan{font-family:ui-monospace,monospace;font-size:11px;color:#8B968F;margin-top:8px}
+    .cx-send{margin-left:auto;background:#3ECF8E;color:#04240F;border:none;border-radius:8px;padding:8px 12px;font-weight:800;font-size:12px;cursor:pointer}
+    details.cx-ata{margin-top:10px}details.cx-ata summary{cursor:pointer;color:#5BA8D9;font-size:12px}
+    .cx-ata pre{white-space:pre-wrap;font-size:11.5px;color:#8B968F;line-height:1.6;font-family:ui-monospace,monospace;background:#1A211C;border-radius:8px;padding:12px;margin-top:8px}
+    .cx-sec{font-size:13px;font-weight:800;color:#8B968F;margin:20px 0 8px;letter-spacing:.5px}
+    .cx-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px}
+    .cx-st{background:#141A16;border:1px solid #212B25;border-radius:10px;padding:12px 8px;text-align:center}
+    .cx-st b{display:block;font-family:ui-monospace,monospace;font-size:18px;color:#3ECF8E}
+    .cx-st small{font-size:9px;letter-spacing:.8px;color:#646E67}
+    .cx-tbl{width:100%;border-collapse:collapse;font-size:12px;background:#141A16;border-radius:10px;overflow:hidden}
+    .cx-tbl th{text-align:left;font-size:9.5px;letter-spacing:1px;color:#646E67;background:#1A211C;padding:8px}
+    .cx-tbl td{padding:8px;border-bottom:1px solid #1C2620;vertical-align:middle}
+    .cx-mono{font-family:ui-monospace,monospace;font-size:11px}
+    .cx-del{background:transparent;color:#E0685F;border:1px solid rgba(224,104,95,.4);border-radius:7px;padding:5px 10px;font-size:11px;cursor:pointer}
+    .cx-empty{text-align:center;color:#646E67;padding:34px 0;font-size:13px}
+    @media(max-width:560px){.cx-stats{grid-template-columns:repeat(2,1fr)}}
+    `;
+    document.head.appendChild(st);
+
+    document.body.insertAdjacentHTML("beforeend", `
+      <button class="cx-fab" id="cxFab">🧠 Comitê</button>
+      <div class="cx-ov" id="cxOv"><div class="cx-box">
+        <div class="cx-top">
+          <div class="cx-h">ACS<span>·</span>COMITÊ DE INVESTIMENTO</div>
+          <button class="cx-x" id="cxClose">Fechar ✕</button>
+        </div>
+        <button class="cx-run" id="cxRun">🔍 CONVOCAR COMITÊ (19 pares)</button>
+        <div class="cx-status" id="cxStatus">Varredura técnica → dossiê → debate de 5 agentes → nota. Só ideias ≥ 65 e sem veto são aprovadas. Custo: R$ 0,00.</div>
+        <div id="cxIdeias"></div>
+        <div class="cx-sec">📒 PAPER TRADING — validação 30 dias (banca fictícia)</div>
+        <div class="cx-stats">
+          <div class="cx-st"><b id="cxEq">—</b><small>EQUITY FICTÍCIO</small></div>
+          <div class="cx-st"><b id="cxWr">—</b><small>WIN RATE</small></div>
+          <div class="cx-st"><b id="cxR">—</b><small>SOMA R</small></div>
+          <div class="cx-st"><b id="cxAb">—</b><small>ABERTAS</small></div>
+        </div>
+        <div style="overflow-x:auto"><table class="cx-tbl"><thead><tr>
+          <th>#</th><th>PAR</th><th>LADO</th><th>ENTRADA</th><th>STOP</th><th>ALVOS</th><th>NOTA</th><th>STATUS</th><th>R</th><th></th>
+        </tr></thead><tbody id="cxBook"></tbody></table></div>
+      </div></div>
+    `);
+
+    var $ = function (id) { return document.getElementById(id); };
+    var esc = function (s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); };
+
+    var PARES = ["BTC/USDT","ETH/USDT","BNB/USDT","SOL/USDT","XRP/USDT","ADA/USDT","AVAX/USDT","LINK/USDT","DOGE/USDT","ARB/USDT","OP/USDT","INJ/USDT","TON/USDT","SUI/USDT","PEPE/USDT","WLD/USDT","NEAR/USDT","FTM/USDT","APT/USDT"];
+    var BY = "https://api.bybit.com";
+    var jget = function (u) { return fetch(u).then(function (r) { return r.json(); }); };
+    var sym = function (p) { return p.replace("/", ""); };
+    function klines(s, itv) {
+      return jget(BY + "/v5/market/kline?category=linear&symbol=" + s + "&interval=" + itv + "&limit=200")
+        .then(function (d) { return (d.result && d.result.list || []).map(function (k) {
+          return { t: +k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5] }; }).reverse(); });
+    }
+
+    /* ---------- indicadores ---------- */
+    var ema = function (v, p) { if (v.length < p) return null; var k = 2 / (p + 1); var e = v.slice(0, p).reduce(function (a, b) { return a + b; }, 0) / p; for (var i = p; i < v.length; i++) e = v[i] * k + e * (1 - k); return e; };
+    var rsi = function (c, p) { p = p || 14; if (c.length <= p) return null; var g = 0, l = 0, i, d; for (i = 1; i <= p; i++) { d = c[i] - c[i - 1]; d >= 0 ? g += d : l -= d; } g /= p; l /= p; for (i = p + 1; i < c.length; i++) { d = c[i] - c[i - 1]; g = (g * (p - 1) + Math.max(d, 0)) / p; l = (l * (p - 1) + Math.max(-d, 0)) / p; } return 100 - 100 / (1 + (l === 0 ? 100 : g / l)); };
+    var atr = function (k, p) { p = p || 14; if (k.length <= p) return null; var t = k.map(function (c, i) { return i === 0 ? c.h - c.l : Math.max(c.h - c.l, Math.abs(c.h - k[i - 1].c), Math.abs(c.l - k[i - 1].c)); }); var a = t.slice(1, p + 1).reduce(function (x, y) { return x + y; }, 0) / p; for (var i = p + 1; i < k.length; i++) a = (a * (p - 1) + t[i]) / p; return a; };
+    function estrutura(k) { var H = [], L = [], i, w; for (i = 3; i < k.length - 3; i++) { w = k.slice(i - 3, i + 4); if (k[i].h === Math.max.apply(null, w.map(function (c) { return c.h; }))) H.push(k[i].h); if (k[i].l === Math.min.apply(null, w.map(function (c) { return c.l; }))) L.push(k[i].l); } if (H.length < 2 || L.length < 2) return { trend: "range" }; var pH = H[H.length - 2], cH = H[H.length - 1], pL = L[L.length - 2], cL = L[L.length - 1]; var last = k[k.length - 1].c; return { trend: cH > pH && cL > pL ? "up" : cH < pH && cL < pL ? "down" : "range", hi: cH, lo: cL, bUp: last > cH, bDn: last < cL }; }
+    var rvol = function (k, p) { p = p || 20; if (k.length < p + 2) return 1; var v = k.map(function (c) { return c.v; }); var cur = v[v.length - 2]; var avg = v.slice(-p - 2, -2).reduce(function (a, b) { return a + b; }, 0) / p; return avg ? cur / avg : 1; };
+
+    /* ---------- OS 5 AGENTES ---------- */
+    function agTecnico(k) {
+      var c = k.map(function (x) { return x.c; }), last = c[c.length - 1];
+      var e20 = ema(c, 20), e50 = ema(c, 50), r = rsi(c), s = estrutura(k), rv = rvol(k), a = atr(k);
+      var long = 0, short = 0, arg = [];
+      if (e20 > e50) { long += 15; arg.push("EMAs 20>50 alinhadas p/ alta"); } else { short += 15; arg.push("EMAs 20<50 alinhadas p/ baixa"); }
+      if (s.trend === "up") { long += 15; arg.push("Estrutura de topos/fundos ascendentes"); }
+      if (s.trend === "down") { short += 15; arg.push("Estrutura de topos/fundos descendentes"); }
+      if (s.bUp) { long += s.trend === "down" ? 20 : 15; arg.push(s.trend === "down" ? "CHoCH de alta (reversão)" : "Rompimento de topo (BOS)"); }
+      if (s.bDn) { short += s.trend === "up" ? 20 : 15; arg.push(s.trend === "up" ? "CHoCH de baixa (reversão)" : "Rompimento de fundo (BOS)"); }
+      if (rv >= 1.5) { long += 8; short += 8; arg.push("Volume relativo " + rv.toFixed(1) + "x confirma"); }
+      if (r > 50 && r < 70) long += 8; if (r < 50 && r > 30) short += 8;
+      var dir = long >= short ? "LONG" : "SHORT";
+      return { nome: "Técnico", dir: dir, nota: Math.min(100, 50 + Math.abs(long - short)), arg: arg, ctx: { last: last, e20: e20, e50: e50, rsi: r, st: s, rv: rv, atr: a } };
+    }
+    function agCetico(t) {
+      var pen = 0, arg = [], r = t.ctx.rsi, rv = t.ctx.rv, s = t.ctx.st, a = t.ctx.atr, last = t.ctx.last;
+      if (t.dir === "LONG" && r >= 75) { pen += 15; arg.push("RSI " + r.toFixed(0) + " esticado — risco de comprar topo"); }
+      if (t.dir === "SHORT" && r <= 25) { pen += 15; arg.push("RSI " + r.toFixed(0) + " esgotado — risco de vender fundo"); }
+      if (rv < 0.8) { pen += 12; arg.push("Volume fraco — movimento sem convicção"); }
+      if (s.trend === "range" && !s.bUp && !s.bDn) { pen += 12; arg.push("Mercado lateral sem rompimento — sem edge direcional"); }
+      var stopRef = t.dir === "LONG" ? s.lo : s.hi;
+      if (stopRef && Math.abs(last - stopRef) > 2.5 * a) { pen += 10; arg.push("Stop estrutural largo demais (>2.5 ATR) — R/R ruim"); }
+      if (!arg.length) arg.push("Sem objeções relevantes — tese resiste ao ataque");
+      return { nome: "Cético de Risco", pen: pen, veto: pen >= 30, arg: arg };
+    }
+    function agMacro(btcK, fng, dir) {
+      var stB = estrutura(btcK), cB = btcK.map(function (x) { return x.c; }), eB = ema(cB, 50);
+      var n = 50, arg = [];
+      var btcUp = stB.trend === "up" || cB[cB.length - 1] > eB;
+      if (dir === "LONG" && btcUp) { n += 20; arg.push("Maré BTC a favor (tendência de alta)"); }
+      if (dir === "LONG" && !btcUp) { n -= 20; arg.push("BTC contra — long de alt nadando contra a maré"); }
+      if (dir === "SHORT" && !btcUp) { n += 20; arg.push("BTC em queda favorece o short"); }
+      if (dir === "SHORT" && btcUp) { n -= 15; arg.push("BTC em alta — short arriscado"); }
+      if (fng != null) {
+        if (fng >= 75 && dir === "LONG") { n -= 10; arg.push("Ganância extrema (" + fng + ") — euforia costuma anteceder correção"); }
+        else if (fng <= 20 && dir === "SHORT") { n -= 10; arg.push("Medo extremo (" + fng + ") — fundo pode estar próximo"); }
+        else arg.push("Sentimento (" + fng + ") neutro para a tese");
+      }
+      return { nome: "Macro/Regime", nota: Math.max(0, Math.min(100, n)), arg: arg };
+    }
+    function agFluxo(tk, ratio, dir) {
+      var n = 50, arg = [];
+      var f = parseFloat((tk && tk.fundingRate) || "0");
+      if (dir === "LONG" && f >= 0.0005) { n -= 12; arg.push("Funding " + (f * 100).toFixed(3) + "% — longs pagando caro (lado lotado)"); }
+      if (dir === "LONG" && f <= -0.0001) { n += 12; arg.push("Funding negativo — shorts pagam, combustível p/ alta"); }
+      if (dir === "SHORT" && f >= 0.0005) { n += 12; arg.push("Funding alto — excesso de longs vulnerável"); }
+      if (dir === "SHORT" && f <= -0.0003) { n -= 12; arg.push("Funding negativo — short lotado, risco de squeeze"); }
+      if (ratio) {
+        var b = +ratio.buyRatio;
+        if (dir === "LONG" && b >= 0.68) { n -= 8; arg.push((b * 100).toFixed(0) + "% comprados — multidão do mesmo lado"); }
+        if (dir === "SHORT" && b <= 0.35) { n -= 8; arg.push("Multidão vendida — cuidado com squeeze"); }
+      }
+      if (!arg.length) arg.push("Posicionamento de derivativos neutro");
+      return { nome: "Fluxo/Derivativos", nota: Math.max(0, Math.min(100, n)), arg: arg };
+    }
+    function agGestor(t, c, m, f) {
+      var comp = Math.round(t.nota * 0.40 + m.nota * 0.30 + f.nota * 0.30 - c.pen * 0.8);
+      var s = t.ctx.st, a = t.ctx.atr, last = t.ctx.last;
+      var stop = t.dir === "LONG" ? (s.lo != null ? s.lo : last - 1.5 * a) - 0.35 * a : (s.hi != null ? s.hi : last + 1.5 * a) + 0.35 * a;
+      if (t.dir === "LONG" && (stop >= last || last - stop < a)) stop = last - 1.5 * a;
+      if (t.dir === "SHORT" && (stop <= last || stop - last < a)) stop = last + 1.5 * a;
+      var r = Math.abs(last - stop), sg = t.dir === "LONG" ? 1 : -1;
+      var prec = last >= 100 ? 2 : last >= 1 ? 4 : 6;
+      var targets = [1.5, 2.5, 4].map(function (mm) { return +(last + sg * r * mm).toFixed(prec); });
+      var aprova = comp >= 65 && !c.veto;
+      var arg = [c.veto ? "VETO do Cético acatado — ideia eliminada" :
+        aprova ? "Nota composta " + comp + " ≥ 65 — APROVADA. Risco 1% da banca, stop estrutural, alvos 1.5R/2.5R/4R, stop no empate após 1º alvo." :
+        "Nota composta " + comp + " < 65 — reprovada por qualidade insuficiente."];
+      return { nome: "Gestor", nota: comp, aprova: aprova, entry: +last.toFixed(prec), stop: +stop.toFixed(prec), targets: targets, arg: arg };
+    }
+    function ata(par, t, c, m, f, g) {
+      var L = [];
+      L.push("═══ ATA DO COMITÊ — " + par + " · " + new Date().toLocaleString("pt-BR") + " ═══");
+      L.push("\n▸ RODADA 1 — TESES");
+      L.push("[Técnico · " + t.nota + "] direção " + t.dir + ": " + t.arg.join("; "));
+      L.push("[Macro · " + m.nota + "] " + m.arg.join("; "));
+      L.push("[Fluxo · " + f.nota + "] " + f.arg.join("; "));
+      L.push("\n▸ RODADA 2 — ATAQUE DO CÉTICO (penalidade " + c.pen + (c.veto ? " · VETO" : "") + ")");
+      L.push(c.arg.join("; "));
+      L.push("\n▸ RODADA 3 — VEREDITO DO GESTOR (nota " + g.nota + ")");
+      L.push(g.arg.join("; "));
+      if (g.aprova) L.push("Plano: " + t.dir + " @ " + g.entry + " · stop " + g.stop + " · alvos " + g.targets.join(" / "));
+      return L.join("\n");
+    }
+
+    /* ---------- pipeline ---------- */
+    var IDEIAS = [];
+    function convocar() {
+      var btn = $("cxRun"), stEl = $("cxStatus");
+      btn.disabled = true; IDEIAS = []; $("cxIdeias").innerHTML = "";
+      stEl.textContent = "Coletando contexto (BTC, sentimento, tickers)…";
+      Promise.all([
+        klines("BTCUSDT", "240"),
+        jget("https://api.alternative.me/fng/?limit=1").catch(function () { return null; }),
+        jget(BY + "/v5/market/tickers?category=linear"),
+      ]).then(function (res) {
+        var btcK = res[0], fngD = res[1], tks = res[2];
+        var fng = fngD && fngD.data && fngD.data[0] ? +fngD.data[0].value : null;
+        var tkMap = {}; (tks.result && tks.result.list || []).forEach(function (t) { tkMap[t.symbol] = t; });
+
+        var i = 0;
+        function prox() {
+          if (i >= PARES.length) {
+            IDEIAS.sort(function (a, b) { return b.g.nota - a.g.nota; });
+            render();
+            var ap = IDEIAS.filter(function (x) { return x.g.aprova; }).length;
+            stEl.textContent = "Deliberação encerrada: " + IDEIAS.length + " teses debatidas · " + ap + " aprovada(s) · custo R$ 0,00.";
+            btn.disabled = false;
+            return;
+          }
+          var par = PARES[i], s = sym(par);
+          stEl.textContent = "Comitê analisando " + par + " (" + (i + 1) + "/" + PARES.length + ")…";
+          i++;
+          klines(s, "240").then(function (k) {
+            if (k.length < 120) return;
+            var t = agTecnico(k);
+            if (t.nota < 60) return; // sem confluência técnica, nem convoca o resto
+            return jget(BY + "/v5/market/account-ratio?category=linear&symbol=" + s + "&period=1h&limit=1")
+              .then(function (d) { return d.result && d.result.list ? d.result.list[0] : null; })
+              .catch(function () { return null; })
+              .then(function (ratio) {
+                var c = agCetico(t);
+                var m = agMacro(btcK, fng, t.dir);
+                var f = agFluxo(tkMap[s], ratio, t.dir);
+                var g = agGestor(t, c, m, f);
+                IDEIAS.push({ par: par, dir: t.dir, t: t, c: c, m: m, f: f, g: g, ata: ata(par, t, c, m, f, g) });
+              });
+          }).catch(function () {}).then(function () { setTimeout(prox, 220); });
+        }
+        prox();
+      }).catch(function (e) { stEl.textContent = "Erro na varredura: " + e.message; btn.disabled = false; });
+    }
+
+    function render() {
+      $("cxIdeias").innerHTML = IDEIAS.length ? IDEIAS.map(function (x, i) {
+        var g = x.g;
+        var cor = g.aprova ? "#3ECF8E" : g.nota >= 50 ? "#D9B24A" : "#E0685F";
+        return '<div class="cx-card ' + (g.aprova ? "ap" : "rp") + '">' +
+          '<div class="cx-row">' +
+            '<span class="cx-nota" style="color:' + cor + '">' + g.nota + '</span>' +
+            '<b style="font-size:15px">' + esc(x.par) + '</b>' +
+            '<span class="cx-b ' + (x.dir === "LONG" ? "long" : "short") + '">' + x.dir + '</span>' +
+            '<span class="cx-b ' + (g.aprova ? "ok" : "no") + '">' + (g.aprova ? "APROVADA" : "REPROVADA") + '</span>' +
+            (g.aprova ? '<button class="cx-send" data-i="' + i + '">📒 Paper Trading</button>' : '') +
+          '</div>' +
+          '<div style="margin-top:8px">' +
+            '<span class="cx-ag">Técnico ' + x.t.nota + '</span><span class="cx-ag">Cético −' + x.c.pen + (x.c.veto ? " VETO" : "") + '</span>' +
+            '<span class="cx-ag">Macro ' + x.m.nota + '</span><span class="cx-ag">Fluxo ' + x.f.nota + '</span>' +
+          '</div>' +
+          (g.aprova ? '<div class="cx-plan">Entrada ' + g.entry + ' · Stop ' + g.stop + ' · Alvos ' + g.targets.join(" / ") + '</div>' : '') +
+          '<details class="cx-ata"><summary>📜 Ler ata do debate</summary><pre>' + esc(x.ata) + '</pre></details>' +
+        '</div>';
+      }).join("") : '<div class="cx-empty">Nenhuma tese passou no filtro técnico agora — comitê não delibera sobre mercado sem setup. Rode de novo mais tarde.</div>';
+    }
+
+    /* ---------- paper trading (usa a ADMIN_KEY) ---------- */
+    function pedirKey() {
+      var k = (prompt("Cole sua ADMIN_KEY (a mesma do painel admin):", "") || "").trim();
+      if (k) localStorage.setItem("alfa_admin_key", k);
+      return k;
+    }
+    function api(path, opts, interactive) {
+      opts = opts || {};
+      if (!KEY() && interactive) pedirKey();
+      if (!KEY()) return Promise.reject(new Error("no_key"));
+      opts.headers = Object.assign({ "Content-Type": "application/json", "x-admin-key": KEY() }, opts.headers || {});
+      return fetch(path, opts).then(function (r) {
+        if (r.status === 401 && interactive) {
+          localStorage.removeItem("alfa_admin_key");
+          if (pedirKey()) return api(path, opts, false);
+        }
+        return r;
+      });
+    }
+
+    function enviarPaper(i) {
+      var x = IDEIAS[i];
+      if (!x || !x.g.aprova) return;
+      api("/api/admin/paper/open", {
+        method: "POST",
+        body: JSON.stringify({ pair: x.par, side: x.dir, entry: x.g.entry, stop: x.g.stop, targets: x.g.targets, score: x.g.nota, setup: "comite_v2_scanner", ata: x.ata }),
+      }, true).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (d) {
+          if (r.status === 404) { alert("O servidor ainda não tem o bloco PAPER TRADING v1 — cola ele no server.js (acima do app.listen) e faz o deploy."); return; }
+          alert(r.ok ? "📒 Posição fictícia aberta — acompanhamento automático por até 30 dias." : (d.message || "Erro ao abrir."));
+          livro();
+        });
+      }).catch(function () {});
+    }
+
+    function livro() {
+      api("/api/admin/paper/book", {}, true).then(function (r) {
+        if (r.status === 404) {
+          $("cxBook").innerHTML = '<tr><td colspan="10"><div class="cx-empty">🔌 O bloco PAPER TRADING v1 ainda não está no server.js — cola ele acima do app.listen e faz o deploy.</div></td></tr>';
+          return;
+        }
+        if (!r.ok) return;
+        r.json().then(function (d) {
+          $("cxEq").textContent = "R$ " + Number(d.equity).toLocaleString("pt-BR", { minimumFractionDigits: 2 });
+          $("cxWr").textContent = d.stats.winRate == null ? "—" : d.stats.winRate + "%";
+          $("cxR").textContent = (d.stats.somaR >= 0 ? "+" : "") + d.stats.somaR + "R";
+          $("cxAb").textContent = d.stats.abertas;
+          $("cxBook").innerHTML = d.positions.length ? d.positions.map(function (p) {
+            var stCls = p.status === "open" ? "open" : (p.result_r > 0 ? "win" : "loss");
+            var stTxt = p.status === "closed" ? (p.motivo || "fechada") : "aberta";
+            var rTxt = p.status === "closed" ? ((p.result_r >= 0 ? "+" : "") + p.result_r + "R") : (p.hit ? p.hit + " alvo(s)" : "—");
+            return "<tr><td class='cx-mono'>#" + p.id + "</td><td><b>" + esc(p.pair) + "</b></td>" +
+              "<td><span class='cx-b " + (p.side === "LONG" ? "long" : "short") + "'>" + p.side + "</span></td>" +
+              "<td class='cx-mono'>" + p.entry + "</td><td class='cx-mono'>" + p.stop + "</td>" +
+              "<td class='cx-mono' style='font-size:10px'>" + p.targets.join(" / ") + "</td>" +
+              "<td class='cx-mono'>" + (p.score != null ? p.score : "—") + "</td>" +
+              "<td><span class='cx-b " + stCls + "'>" + esc(stTxt) + "</span></td>" +
+              "<td class='cx-mono'>" + rTxt + "</td>" +
+              "<td>" + (p.status === "open" ? "<button class='cx-del' data-close='" + p.id + "'>Fechar</button>" : "") + "</td></tr>";
+          }).join("") : '<tr><td colspan="10"><div class="cx-empty">Livro vazio — aprove a primeira ideia do comitê.</div></td></tr>';
+        });
+      }).catch(function () {});
+    }
+
+    /* ---------- eventos ---------- */
+    $("cxFab").addEventListener("click", function () { $("cxOv").classList.add("on"); livro(); });
+    $("cxClose").addEventListener("click", function () { $("cxOv").classList.remove("on"); });
+    $("cxRun").addEventListener("click", convocar);
+    $("cxIdeias").addEventListener("click", function (e) {
+      var b = e.target.closest("[data-i]");
+      if (b) enviarPaper(Number(b.dataset.i));
+    });
+    $("cxBook").addEventListener("click", function (e) {
+      var b = e.target.closest("[data-close]");
+      if (!b) return;
+      if (!confirm("Fechar posição fictícia a mercado?")) return;
+      api("/api/admin/paper/close/" + b.dataset.close, { method: "POST" }, true).then(livro);
+    });
+    setInterval(function () { if ($("cxOv").classList.contains("on")) livro(); }, 60000);
+  }
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
+  else boot();
+})();
+</script>
