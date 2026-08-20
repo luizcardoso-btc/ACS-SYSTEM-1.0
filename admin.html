@@ -430,6 +430,268 @@ tr:hover td{background:rgba(0,255,136,.02);}
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
   else boot();
 })();
+</script> 
+ <!-- ═══ ACS · COMITÊ DE INVESTIMENTO v1 — 5 agentes, custo zero ═══ -->
+<script>
+(function () {
+  "use strict";
+  function boot() {
+    if (window.__acsComite) return;
+    const tabsBar = document.querySelector(".admin-tabs");
+    const panel = document.getElementById("panel");
+    if (!tabsBar || !panel) return;
+    window.__acsComite = true;
+
+    const PARES = ["BTC/USDT","ETH/USDT","BNB/USDT","SOL/USDT","XRP/USDT","ADA/USDT","AVAX/USDT","LINK/USDT","DOGE/USDT","ARB/USDT","OP/USDT","INJ/USDT","TON/USDT","SUI/USDT","PEPE/USDT","WLD/USDT","NEAR/USDT","FTM/USDT","APT/USDT"];
+    const BY = "https://api.bybit.com";
+    const KEY = () => localStorage.getItem("alfa_admin_key") || "";
+
+    const st = document.createElement("style");
+    st.textContent = `.cx-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:12px}
+      .cx-card.ap{border-color:rgba(0,255,136,.45)}.cx-card.rp{opacity:.65}
+      .cx-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+      .cx-nota{font-family:"Share Tech Mono",monospace;font-size:22px;font-weight:700}
+      .cx-ag{display:inline-block;font-family:"Share Tech Mono",monospace;font-size:10px;padding:2px 8px;border-radius:5px;background:var(--bg3);border:1px solid var(--border);margin:2px 3px 0 0;color:var(--text4)}
+      details.cx-ata{margin-top:10px}summary{cursor:pointer;color:var(--blue);font-size:12px}
+      .cx-ata pre{white-space:pre-wrap;font-size:11.5px;color:var(--text4);line-height:1.6;font-family:"Share Tech Mono",monospace;background:var(--bg3);border-radius:8px;padding:12px;margin-top:8px}`;
+    document.head.appendChild(st);
+
+    tabsBar.insertAdjacentHTML("beforeend",
+      '<button class="admin-tab" data-tab="comite">🧠 Comitê</button>');
+    panel.insertAdjacentHTML("beforeend", `
+      <div id="tab-comite" style="display:none">
+        <div class="toolbar">
+          <button class="btn" id="cxRun">🔍 CONVOCAR COMITÊ (19 pares)</button>
+          <span class="mono" id="cxStatus" style="color:var(--text4)">Varredura técnica → dossiê → debate de 5 agentes → nota. Só ideias ≥ 65 são aprovadas.</span>
+        </div>
+        <div id="cxIdeias"></div>
+        <h3 style="font-size:14px;margin:18px 0 8px;color:var(--text4)">📒 PAPER TRADING — validação 30 dias (banca fictícia)</h3>
+        <div class="stat-row">
+          <div class="stat-box"><div class="stat-val" id="cxEq">—</div><div class="stat-lbl">EQUITY FICTÍCIO</div></div>
+          <div class="stat-box"><div class="stat-val" id="cxWr">—</div><div class="stat-lbl">WIN RATE</div></div>
+          <div class="stat-box"><div class="stat-val" id="cxR">—</div><div class="stat-lbl">SOMA R</div></div>
+          <div class="stat-box"><div class="stat-val" id="cxAb">—</div><div class="stat-lbl">ABERTAS</div></div>
+        </div>
+        <table><thead><tr><th>#</th><th>PAR</th><th>LADO</th><th>ENTRADA</th><th>STOP</th><th>ALVOS</th><th>NOTA</th><th>STATUS</th><th>R</th><th></th></tr></thead>
+        <tbody id="cxBook"></tbody></table>
+      </div>`);
+
+    /* ---------- indicadores ---------- */
+    const ema = (v, p) => { if (v.length < p) return null; const k = 2/(p+1); let e = v.slice(0,p).reduce((a,b)=>a+b,0)/p; for (let i=p;i<v.length;i++) e = v[i]*k + e*(1-k); return e; };
+    const rsi = (c, p=14) => { if (c.length<=p) return null; let g=0,l=0; for(let i=1;i<=p;i++){const d=c[i]-c[i-1]; d>=0?g+=d:l-=d;} g/=p;l/=p; for(let i=p+1;i<c.length;i++){const d=c[i]-c[i-1]; g=(g*(p-1)+Math.max(d,0))/p; l=(l*(p-1)+Math.max(-d,0))/p;} return 100-100/(1+(l===0?100:g/l)); };
+    const atr = (k, p=14) => { if (k.length<=p) return null; const t=k.map((c,i)=>i===0?c.h-c.l:Math.max(c.h-c.l,Math.abs(c.h-k[i-1].c),Math.abs(c.l-k[i-1].c))); let a=t.slice(1,p+1).reduce((x,y)=>x+y,0)/p; for(let i=p+1;i<k.length;i++)a=(a*(p-1)+t[i])/p; return a; };
+    function estrutura(k){ const H=[],L=[]; for(let i=3;i<k.length-3;i++){const w=k.slice(i-3,i+4); if(k[i].h===Math.max(...w.map(c=>c.h)))H.push(k[i].h); if(k[i].l===Math.min(...w.map(c=>c.l)))L.push(k[i].l);} if(H.length<2||L.length<2)return{trend:"range"}; const [pH,cH]=H.slice(-2),[pL,cL]=L.slice(-2); const last=k[k.length-1].c; return{trend:cH>pH&&cL>pL?"up":cH<pH&&cL<pL?"down":"range",hi:cH,lo:cL,bUp:last>cH,bDn:last<cL}; }
+    const rvol = (k,p=20)=>{ if(k.length<p+2)return 1; const v=k.map(c=>c.v); const cur=v[v.length-2]; const avg=v.slice(-p-2,-2).reduce((a,b)=>a+b,0)/p; return avg?cur/avg:1; };
+
+    /* ---------- dados ---------- */
+    const jget = (u) => fetch(u).then((r) => r.json());
+    const sym = (p) => p.replace("/", "");
+    async function klines(s, itv){ const d=await jget(`${BY}/v5/market/kline?category=linear&symbol=${s}&interval=${itv}&limit=200`); return (d.result?.list||[]).map(k=>({t:+k[0],o:+k[1],h:+k[2],l:+k[3],c:+k[4],v:+k[5]})).reverse(); }
+
+    /* ---------- OS 5 AGENTES ---------- */
+    function agTecnico(k){
+      const c=k.map(x=>x.c), last=c[c.length-1];
+      const e20=ema(c,20), e50=ema(c,50), r=rsi(c), st=estrutura(k), rv=rvol(k), a=atr(k);
+      let long=0, short=0; const arg=[];
+      if(e20>e50){long+=15;arg.push("EMAs 20>50 alinhadas p/ alta");} else {short+=15;arg.push("EMAs 20<50 alinhadas p/ baixa");}
+      if(st.trend==="up"){long+=15;arg.push("Estrutura de topos/fundos ascendentes");}
+      if(st.trend==="down"){short+=15;arg.push("Estrutura de topos/fundos descendentes");}
+      if(st.bUp){long+=st.trend==="down"?20:15;arg.push(st.trend==="down"?"CHoCH de alta (reversão)":"Rompimento de topo (BOS)");}
+      if(st.bDn){short+=st.trend==="up"?20:15;arg.push(st.trend==="up"?"CHoCH de baixa (reversão)":"Rompimento de fundo (BOS)");}
+      if(rv>=1.5){long+=8;short+=8;arg.push(`Volume relativo ${rv.toFixed(1)}x confirma`);}
+      if(r>50&&r<70)long+=8; if(r<50&&r>30)short+=8;
+      const dir=long>=short?"LONG":"SHORT";
+      return {nome:"Técnico",dir,nota:Math.min(100,50+Math.abs(long-short)),arg,ctx:{last,e20,e50,rsi:r,st,rv,atr:a}};
+    }
+    function agCetico(t){
+      let pen=0; const arg=[]; const {rsi:r,rv,st,atr:a,last}=t.ctx;
+      if(t.dir==="LONG"&&r>=75){pen+=15;arg.push(`RSI ${r.toFixed(0)} esticado — risco de comprar topo`);}
+      if(t.dir==="SHORT"&&r<=25){pen+=15;arg.push(`RSI ${r.toFixed(0)} esgotado — risco de vender fundo`);}
+      if(rv<0.8){pen+=12;arg.push("Volume fraco — movimento sem convicção");}
+      if(st.trend==="range"&&!st.bUp&&!st.bDn){pen+=12;arg.push("Mercado lateral sem rompimento — sem edge direcional");}
+      const stopRef=t.dir==="LONG"?st.lo:st.hi;
+      if(stopRef&&Math.abs(last-stopRef)>2.5*a){pen+=10;arg.push("Stop estrutural largo demais (>2.5 ATR) — R/R ruim");}
+      if(!arg.length)arg.push("Sem objeções relevantes — tese resiste ao ataque");
+      return {nome:"Cético de Risco",pen,veto:pen>=30,arg};
+    }
+    function agMacro(btcK,fng,dir){
+      const stB=estrutura(btcK); const cB=btcK.map(x=>x.c); const eB=ema(cB,50);
+      let n=50; const arg=[];
+      const btcUp=stB.trend==="up"||cB[cB.length-1]>eB;
+      if(dir==="LONG"&&btcUp){n+=20;arg.push("Maré BTC a favor (tendência de alta)");}
+      if(dir==="LONG"&&!btcUp){n-=20;arg.push("BTC contra — long de alt nadando contra a maré");}
+      if(dir==="SHORT"&&!btcUp){n+=20;arg.push("BTC em queda favorece o short");}
+      if(dir==="SHORT"&&btcUp){n-=15;arg.push("BTC em alta — short arriscado");}
+      if(fng!=null){
+        if(fng>=75&&dir==="LONG"){n-=10;arg.push(`Ganância extrema (${fng}) — euforia costuma anteceder correção`);}
+        else if(fng<=20&&dir==="SHORT"){n-=10;arg.push(`Medo extremo (${fng}) — fundo pode estar próximo`);}
+        else arg.push(`Sentimento (${fng}) neutro para a tese`);
+      }
+      return {nome:"Macro/Regime",nota:Math.max(0,Math.min(100,n)),arg};
+    }
+    function agFluxo(tk,ratio,dir){
+      let n=50; const arg=[];
+      const f=parseFloat(tk?.fundingRate??"0");
+      if(dir==="LONG"&&f>=0.0005){n-=12;arg.push(`Funding ${(f*100).toFixed(3)}% — longs pagando caro (lado lotado)`);}
+      if(dir==="LONG"&&f<=-0.0001){n+=12;arg.push("Funding negativo — shorts pagam, combustível p/ alta");}
+      if(dir==="SHORT"&&f>=0.0005){n+=12;arg.push("Funding alto — excesso de longs vulnerável");}
+      if(dir==="SHORT"&&f<=-0.0003){n-=12;arg.push("Funding negativo — short lotado, risco de squeeze");}
+      if(ratio){
+        const b=+ratio.buyRatio;
+        if(dir==="LONG"&&b>=0.68){n-=8;arg.push(`${(b*100).toFixed(0)}% comprados — multidão do mesmo lado`);}
+        if(dir==="SHORT"&&b<=0.35){n-=8;arg.push("Multidão vendida — cuidado com squeeze");}
+      }
+      if(!arg.length)arg.push("Posicionamento de derivativos neutro");
+      return {nome:"Fluxo/Derivativos",nota:Math.max(0,Math.min(100,n)),arg};
+    }
+    function agGestor(t,c,m,f){
+      const comp=Math.round(t.nota*0.40+m.nota*0.30+f.nota*0.30-c.pen*0.8);
+      const {st,atr:a,last}=t.ctx;
+      let stop=t.dir==="LONG"?(st.lo??last-1.5*a)-0.35*a:(st.hi??last+1.5*a)+0.35*a;
+      if(t.dir==="LONG"&&(stop>=last||last-stop<a))stop=last-1.5*a;
+      if(t.dir==="SHORT"&&(stop<=last||stop-last<a))stop=last+1.5*a;
+      const r=Math.abs(last-stop), s=t.dir==="LONG"?1:-1;
+      const prec=last>=100?2:last>=1?4:6;
+      const targets=[1.5,2.5,4].map(mm=>+(last+s*r*mm).toFixed(prec));
+      const aprova=comp>=65&&!c.veto;
+      const arg=[c.veto?"VETO do Cético acatado — ideia eliminada":
+        aprova?`Nota composta ${comp} ≥ 65 — APROVADA. Risco 1% da banca, stop estrutural, alvos 1.5R/2.5R/4R, stop no empate após 1º alvo.`:
+        `Nota composta ${comp} < 65 — reprovada por qualidade insuficiente.`];
+      return {nome:"Gestor",nota:comp,aprova,entry:+last.toFixed(prec),stop:+stop.toFixed(prec),targets,arg};
+    }
+
+    function ata(par,t,c,m,f,g){
+      const L=[];
+      L.push(`═══ ATA DO COMITÊ — ${par} · ${new Date().toLocaleString("pt-BR")} ═══`);
+      L.push(`\n▸ RODADA 1 — TESES`);
+      L.push(`[Técnico · ${t.nota}] direção ${t.dir}: ${t.arg.join("; ")}`);
+      L.push(`[Macro · ${m.nota}] ${m.arg.join("; ")}`);
+      L.push(`[Fluxo · ${f.nota}] ${f.arg.join("; ")}`);
+      L.push(`\n▸ RODADA 2 — ATAQUE DO CÉTICO (penalidade ${c.pen}${c.veto?" · VETO":""})`);
+      L.push(c.arg.join("; "));
+      L.push(`\n▸ RODADA 3 — VEREDITO DO GESTOR (nota ${g.nota})`);
+      L.push(g.arg.join("; "));
+      if(g.aprova)L.push(`Plano: ${t.dir} @ ${g.entry} · stop ${g.stop} · alvos ${g.targets.join(" / ")}`);
+      return L.join("\n");
+    }
+
+    /* ---------- pipeline ---------- */
+    let IDEIAS=[];
+    async function convocar(){
+      const btn=document.getElementById("cxRun"), stEl=document.getElementById("cxStatus");
+      btn.disabled=true; IDEIAS=[]; document.getElementById("cxIdeias").innerHTML="";
+      try{
+        stEl.textContent="Coletando contexto (BTC, sentimento, tickers)…";
+        const [btcK,fngD,tks]=await Promise.all([
+          klines("BTCUSDT","240"),
+          jget("https://api.alternative.me/fng/?limit=1").catch(()=>null),
+          jget(`${BY}/v5/market/tickers?category=linear`),
+        ]);
+        const fng=fngD?.data?.[0]?.value?+fngD.data[0].value:null;
+        const tkMap={}; for(const t of tks.result?.list||[])tkMap[t.symbol]=t;
+
+        for(let i=0;i<PARES.length;i++){
+          const par=PARES[i], s=sym(par);
+          stEl.textContent=`Comitê analisando ${par} (${i+1}/${PARES.length})…`;
+          try{
+            const k=await klines(s,"240");
+            if(k.length<120)continue;
+            const t=agTecnico(k);
+            if(t.nota<60)continue; // filtro barato: sem confluência técnica, nem convoca o resto
+            const c=agCetico(t);
+            const m=agMacro(btcK,fng,t.dir);
+            const ratio=await jget(`${BY}/v5/market/account-ratio?category=linear&symbol=${s}&period=1h&limit=1`)
+              .then(d=>d.result?.list?.[0]).catch(()=>null);
+            const f=agFluxo(tkMap[s],ratio,t.dir);
+            const g=agGestor(t,c,m,f);
+            IDEIAS.push({par,dir:t.dir,t,c,m,f,g,ata:ata(par,t,c,m,f,g)});
+          }catch(_){}
+          await new Promise(r=>setTimeout(r,220)); // gentil com o rate limit
+        }
+        IDEIAS.sort((a,b)=>b.g.nota-a.g.nota);
+        render();
+        const ap=IDEIAS.filter(x=>x.g.aprova).length;
+        stEl.textContent=`Deliberação encerrada: ${IDEIAS.length} teses debatidas · ${ap} aprovada(s) · custo R$ 0,00.`;
+      }catch(e){ stEl.textContent="Erro na varredura: "+e.message; }
+      btn.disabled=false;
+    }
+
+    const esc=(s)=>String(s??"").replace(/[&<>"']/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+    function render(){
+      document.getElementById("cxIdeias").innerHTML=IDEIAS.length?IDEIAS.map((x,i)=>{
+        const g=x.g, cor=g.aprova?"var(--green)":g.nota>=50?"var(--yellow)":"var(--red)";
+        return `<div class="cx-card ${g.aprova?"ap":"rp"}">
+          <div class="cx-top">
+            <span class="cx-nota" style="color:${cor}">${g.nota}</span>
+            <b style="font-size:15px">${x.par}</b>
+            <span class="badge ${x.dir==="LONG"?"long":"short"}">${x.dir}</span>
+            <span class="badge ${g.aprova?"profit":"closed"}">${g.aprova?"APROVADA":"REPROVADA"}</span>
+            ${g.aprova?`<button class="btn sm" style="margin-left:auto" onclick="cxAbrir(${i})">📒 Enviar p/ Paper Trading</button>`:""}
+          </div>
+          <div style="margin-top:8px">
+            <span class="cx-ag">Técnico ${x.t.nota}</span><span class="cx-ag">Cético −${x.c.pen}${x.c.veto?" VETO":""}</span>
+            <span class="cx-ag">Macro ${x.m.nota}</span><span class="cx-ag">Fluxo ${x.f.nota}</span>
+          </div>
+          ${g.aprova?`<div class="mono" style="font-size:11px;color:var(--text4);margin-top:8px">Entrada ${g.entry} · Stop ${g.stop} · Alvos ${g.targets.join(" / ")}</div>`:""}
+          <details class="cx-ata"><summary>📜 Ler ata do debate</summary><pre>${esc(x.ata)}</pre></details>
+        </div>`;
+      }).join(""):'<div class="empty-state">Nenhuma tese passou no filtro técnico agora — comitê não delibera sobre mercado sem setup. Rode de novo mais tarde.</div>';
+    }
+
+    window.cxAbrir=async function(i){
+      const x=IDEIAS[i]; if(!x||!x.g.aprova)return;
+      const r=await fetch("/api/admin/paper/open",{method:"POST",
+        headers:{"Content-Type":"application/json","x-admin-key":KEY()},
+        body:JSON.stringify({pair:x.par,side:x.dir,entry:x.g.entry,stop:x.g.stop,targets:x.g.targets,score:x.g.nota,setup:"comite_v1",ata:x.ata})});
+      const d=await r.json().catch(()=>({}));
+      alert(r.ok?"📒 Posição fictícia aberta — acompanhamento automático por até 30 dias.":(d.message||"Erro ao abrir."));
+      livro();
+    };
+
+    async function livro(){
+      const r=await fetch("/api/admin/paper/book",{headers:{"x-admin-key":KEY()}});
+      if(!r.ok)return;
+      const d=await r.json();
+      cxEq.textContent="R$ "+Number(d.equity).toLocaleString("pt-BR",{minimumFractionDigits:2});
+      cxWr.textContent=d.stats.winRate==null?"—":d.stats.winRate+"%";
+      cxR.textContent=(d.stats.somaR>=0?"+":"")+d.stats.somaR+"R";
+      cxAb.textContent=d.stats.abertas;
+      cxBook.innerHTML=d.positions.length?d.positions.map(p=>{
+        const stMap={open:"active",closed:p.result_r>0?"profit":"loss"};
+        const rTxt=p.status==="closed"?((p.result_r>=0?"+":"")+p.result_r+"R"):(p.hit?`${p.hit} alvo(s)`:"—");
+        return `<tr><td class="mono">#${p.id}</td><td><b>${p.pair}</b></td>
+          <td><span class="badge ${p.side==="LONG"?"long":"short"}">${p.side}</span></td>
+          <td class="mono">${p.entry}</td><td class="mono">${p.stop}</td>
+          <td class="mono" style="font-size:10px">${p.targets.join(" / ")}</td>
+          <td class="mono">${p.score??"—"}</td>
+          <td><span class="badge ${stMap[p.status]||"closed"}">${p.status==="closed"?(p.motivo||"fechada"):"aberta"}</span></td>
+          <td class="mono">${rTxt}</td>
+          <td>${p.status==="open"?`<button class="btn danger sm" onclick="cxFechar(${p.id})">Fechar</button>`:""}</td></tr>`;
+      }).join(""):'<tr><td colspan="10"><div class="empty-state">Livro vazio — aprove a primeira ideia do comitê.</div></td></tr>';
+    }
+    window.cxFechar=async function(id){
+      if(!confirm("Fechar posição fictícia a mercado?"))return;
+      await fetch("/api/admin/paper/close/"+id,{method:"POST",headers:{"x-admin-key":KEY()}});
+      livro();
+    };
+
+    document.getElementById("cxRun").addEventListener("click",convocar);
+    document.addEventListener("click",(e)=>{
+      const t=e.target.closest(".admin-tab"); if(!t)return;
+      const mine=document.getElementById("tab-comite");
+      if(t.dataset.tab==="comite"){
+        document.querySelectorAll(".admin-tab").forEach(b=>b.classList.toggle("active",b===t));
+        ["sinais","precos","usuarios","webhook","comunidade","financeiro"].forEach(x=>{
+          const el=document.getElementById("tab-"+x); if(el)el.style.display="none";
+        });
+        mine.style.display=""; livro();
+      } else if(mine) mine.style.display="none";
+    },true);
+    setInterval(()=>{const m=document.getElementById("tab-comite");if(m&&m.style.display!=="none")livro();},60000);
+  }
+  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",boot);
+  else boot();
+})();
 </script> <body>
 <!-- ══ GATE ══ -->
 <div id="gate" class="gate">
