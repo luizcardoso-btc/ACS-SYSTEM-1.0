@@ -1323,6 +1323,119 @@ app.use(express.static(path.join(__dirname, "public")));
 
   // Espelho bruto p/ calibrar o adaptador: /api/admin/finance/raw?key=ADMIN_KEY
   app.get("/api/admin/finance/raw", requireAdmin, (_req, res) => res.json({ raw: fin.raw }));
+})();/* ══════════════════════════════════════════════
+   PAPER TRADING v1 — livro virtual do Comitê
+   Banca fictícia, risco 1% por ideia, rastreio
+   automático via fetchPrices (CoinGecko) a cada 60s,
+   expiração em 30 dias. Zero custo externo.
+   ══════════════════════════════════════════════ */
+(function () {
+  const PT_FILE = path.join(CM_DIR, "paper_data.json");
+  let pt = { positions: [], nextId: 1, bank: 10000, riskPct: 1 };
+  try { pt = Object.assign(pt, JSON.parse(fsCm.readFileSync(PT_FILE, "utf8"))); } catch (_) {}
+  let ptT = null;
+  const ptSave = () => {
+    clearTimeout(ptT);
+    ptT = setTimeout(() => fsCm.writeFile(PT_FILE, JSON.stringify(pt),
+      (e) => e && console.error("[paper] save:", e.message)), 400);
+  };
+
+  const rMult = (p, exit) => {
+    const risk = Math.abs(p.entry - p.stop);
+    if (!risk) return 0;
+    const raw = (exit - p.entry) / risk;
+    return +( (p.side === "SHORT" ? -raw : raw) ).toFixed(2);
+  };
+
+  function fechar(p, exit, motivo) {
+    p.status = "closed";
+    p.closed_at = new Date().toISOString();
+    p.exit = exit;
+    p.result_r = rMult(p, exit);
+    p.result_pct = +(((exit - p.entry) / p.entry) * 100 * (p.side === "SHORT" ? -1 : 1)).toFixed(2);
+    p.motivo = motivo;
+  }
+
+  async function ptTrack() {
+    const abertas = pt.positions.filter((p) => p.status === "open");
+    if (!abertas.length) return;
+    const prices = await fetchPrices();
+    if (!prices) return;
+    let mudou = false;
+
+    for (const p of abertas) {
+      const px = prices[p.pair]?.price;
+      if (!px) continue;
+      const dias = (Date.now() - new Date(p.opened_at)) / 864e5;
+      const stopHit = p.side === "LONG" ? px <= p.stop : px >= p.stop;
+      const alvo = p.targets[p.hit];
+      const alvoHit = alvo != null && (p.side === "LONG" ? px >= alvo : px <= alvo);
+
+      if (stopHit) { fechar(p, p.stop, "stop"); mudou = true; }
+      else if (alvoHit) {
+        p.hit++;
+        // trailing simples: no 1º alvo, stop vai pro empate
+        if (p.hit === 1) p.stop = p.entry;
+        if (p.hit >= p.targets.length) { fechar(p, alvo, "alvo_final"); }
+        mudou = true;
+      } else if (dias >= 30) { fechar(p, px, "expirou_30d"); mudou = true; }
+      else { p.last_price = px; }
+    }
+    if (mudou) ptSave();
+  }
+  setInterval(ptTrack, 60_000);
+
+  app.post("/api/admin/paper/open", requireAdmin, (req, res) => {
+    const { pair, side, entry, stop, targets, score, setup, ata } = req.body || {};
+    if (!pair || !entry || !stop || !Array.isArray(targets) || !targets.length)
+      return res.status(400).json({ error: "missing_fields" });
+    if (pt.positions.filter((p) => p.status === "open" && p.pair === pair).length)
+      return res.status(409).json({ error: "duplicada", message: "Já existe posição aberta neste par." });
+    const pos = {
+      id: pt.nextId++, pair, side: side === "SHORT" ? "SHORT" : "LONG",
+      entry: +entry, stop: +stop, targets: targets.map(Number),
+      score: score ?? null, setup: setup || "comite",
+      ata: String(ata || "").slice(0, 8000),
+      status: "open", hit: 0, opened_at: new Date().toISOString(),
+    };
+    pt.positions.push(pos);
+    ptSave();
+    res.json({ ok: true, position: pos });
+  });
+
+  app.get("/api/admin/paper/book", requireAdmin, async (_req, res) => {
+    await ptTrack().catch(() => {});
+    const closed = pt.positions.filter((p) => p.status === "closed");
+    const wins = closed.filter((p) => p.result_r > 0);
+    const somaR = +closed.reduce((a, p) => a + (p.result_r || 0), 0).toFixed(2);
+    res.json({
+      bank: pt.bank, riskPct: pt.riskPct,
+      equity: +(pt.bank * (1 + (pt.riskPct / 100) * somaR)).toFixed(2),
+      stats: {
+        abertas: pt.positions.filter((p) => p.status === "open").length,
+        fechadas: closed.length, wins: wins.length,
+        winRate: closed.length ? Math.round((wins.length / closed.length) * 100) : null,
+        somaR, mediaR: closed.length ? +(somaR / closed.length).toFixed(2) : null,
+      },
+      positions: [...pt.positions].sort((a, b) => b.id - a.id).slice(0, 200),
+    });
+  });
+
+  app.post("/api/admin/paper/close/:id", requireAdmin, async (req, res) => {
+    const p = pt.positions.find((x) => x.id === Number(req.params.id) && x.status === "open");
+    if (!p) return res.status(404).json({ error: "not_found" });
+    const prices = await fetchPrices();
+    fechar(p, prices?.[p.pair]?.price ?? p.entry, "manual");
+    ptSave();
+    res.json({ ok: true, position: p });
+  });
+
+  app.delete("/api/admin/paper/:id", requireAdmin, (req, res) => {
+    const before = pt.positions.length;
+    pt.positions = pt.positions.filter((x) => x.id !== Number(req.params.id));
+    ptSave();
+    res.json({ ok: pt.positions.length < before });
+  });
 })();
 app.listen(PORT, () => {
   console.log(`\n🚀 ALFA CRIPTO SINAIS v2.2 rodando na porta ${PORT}`);
